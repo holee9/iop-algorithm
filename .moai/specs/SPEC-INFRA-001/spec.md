@@ -1,9 +1,9 @@
 ---
 id: SPEC-INFRA-001
-version: 0.1.1
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-09
 author: drake.lee
 priority: high
 issue_number: 1
@@ -19,6 +19,7 @@ XDET 영상처리 SW P1의 최우선 작업 T0. 처리 알고리즘을 하나도
 
 ## HISTORY
 
+- **v0.2.0 (2026-07-09)** — 구현 완료(status: implemented). 커밋 64137f3(M1~M5 스캐폴드) + 23f1b42(독립 리뷰 결함 10건 수정). DoD 달성: XDET-TC-000 3판정(A harness / B import-linter / C 계약) CI 통과, 46 passed / 21 skipped(이연 TC skeleton), 레이어링 계약 4건 KEPT, 계약 위반 0건. 구현 중 결정: (a) 게이트에 panel_id 상호일치·kind-스테이지 배선·유효기간 검사 추가(ORCH-4 강화), (b) with_pixel은 검증모드에서 명시적 pixel_f64 갱신 강제(CI-3b stale 차단), (c) params_hash는 ndarray raw-bytes 기반(DATA-4 단사성).
 - **v0.1.1 (2026-07-08)** — plan-audit iteration 1 (FAIL 0.74) 결함 6건 반영:
   - D4: DATA-1에 검증-모드 float64 병행 버퍼 명시, DATA-2·CI-3b와 상호 참조로 float64 채널 정책 폐합.
   - D2: DATA-2를 설계 규칙 + 자동 검출 가능 범위(계약/정적 검사)로 한정, acceptance.md EC-4 축소.
