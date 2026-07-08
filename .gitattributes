@@ -1,0 +1,10 @@
+# Git LFS tracking for binary golden/calibration payloads (REQ-INFRA-DATA-3).
+# T0 establishes the tracking rules only; no real data is committed yet.
+data/**/*.raw   filter=lfs diff=lfs merge=lfs -text
+data/**/*.npz   filter=lfs diff=lfs merge=lfs -text
+data/**/*.tif   filter=lfs diff=lfs merge=lfs -text
+data/**/*.tiff  filter=lfs diff=lfs merge=lfs -text
+data/**/*.npy   filter=lfs diff=lfs merge=lfs -text
+
+# Keep JSON sidecar metadata as normal text (diffable).
+data/**/*.json  -text
