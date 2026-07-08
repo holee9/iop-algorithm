@@ -67,7 +67,16 @@ forbidden_modules = ["modules", "pipeline", "metrics"]
 [[tool.importlinter.contracts]]
 name = "Processing modules are mutually independent (no horizontal imports)"
 type = "independence"
-# Submodule package list grows as processing modules are added (T2+).
-# Empty at T0 (no algorithm modules exist yet); the contract is a no-op
-# placeholder until modules/<name>/ packages appear.
-modules = []
+# T2/WP1 correction modules. Each is a single .py module under `modules/`;
+# they must not import each other (SWR-000-8, REQ-CORR-CONTRACT-3).
+modules = [
+    "modules.offset",
+    "modules.gain",
+    "modules.defect",
+]
+
+[[tool.importlinter.contracts]]
+name = "Processing modules must not import metrics or pipeline (module -> common only)"
+type = "forbidden"
+source_modules = ["modules"]
+forbidden_modules = ["metrics", "pipeline"]

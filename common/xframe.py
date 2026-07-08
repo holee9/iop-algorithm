@@ -25,6 +25,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from enum import IntFlag
+from types import MappingProxyType
 from typing import Any, Mapping
 
 import numpy as np
@@ -81,12 +82,27 @@ class HistoryEntry:
     @MX:NOTE: [AUTO] params_hash and calibset_id make each module invocation
     reproducible and auditable (IEC 62304). Ordering in the chain is the
     execution order; the chain is append-only.
+
+    `extra` carries scalar processing diagnostics (e.g. clamp rate, panel
+    warnings) as a committed channel — NOT a side channel (SWR-000-6). It is
+    the sanctioned way for a module to surface a scalar by-product without an
+    extra return value or a global. Defaults to None for backward compatibility
+    with the 4-field construction used by earlier stages.
     """
 
     module_name: str
     module_version: str
     params_hash: str
     calibset_id: str | None
+    extra: Mapping[str, str | int | float] | None = None
+
+    def __post_init__(self) -> None:
+        # Freeze a mapping copy so the recorded diagnostics cannot be mutated
+        # after the entry is appended (same immutability contract as buffers).
+        if self.extra is not None:
+            object.__setattr__(
+                self, "extra", MappingProxyType(dict(self.extra))
+            )
 
 
 def _canonical_param(value: Any) -> Any:
