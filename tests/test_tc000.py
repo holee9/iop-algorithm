@@ -34,7 +34,10 @@ def _run_lint_imports(*args: str) -> subprocess.CompletedProcess[str]:
         [LINT_IMPORTS, *args],
         cwd=PROJECT_ROOT,
         capture_output=True,
-        text=True,
+        # import-linter emits UTF-8 box-drawing characters; the Windows locale
+        # codec (cp949) cannot decode them and text=True would yield None.
+        encoding="utf-8",
+        errors="replace",
     )
     # Guard against the vacuous-pass failure mode: the tool must produce output.
     assert result.stdout.strip() or result.stderr.strip(), (
