@@ -73,6 +73,9 @@ modules = [
     "modules.offset",
     "modules.gain",
     "modules.defect",
+    "modules.line_noise",
+    "modules.saturation",
+    "modules.geometry",
 ]
 
 [[tool.importlinter.contracts]]

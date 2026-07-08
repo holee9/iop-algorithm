@@ -19,18 +19,35 @@ import numpy as np
 
 from common.calibset import CalibSet
 from common.contract import Params
-from common.xframe import HistoryEntry, NoiseModel, XFrame
+from common.xframe import HistoryEntry, MaskFlag, NoiseModel, XFrame
 
 MODULE_NAME = "offset"
-MODULE_VERSION = "1.0.0"
+MODULE_VERSION = "1.1.0"
 
 # CalibSet(OFFSET) data payload keys (SWR-101).
 K_OFFSET_MAP = "O_map"  # static dark offset map O(x,y)
 K_SIGMA_D = "sigma_d"  # per-pixel read-noise std (SWR-104 hook / noise init)
 K_DELTA_O = "delta_O"  # Optional dynamic offset increment DeltaO(T) [B]
 
+# Params keys.
+P_RAW_SAT = "raw_saturation_threshold"  # raw saturation point S_th [B] (SWR-601)
+
 # Physical floor for unsigned raw after subtraction ([S], not tunable).
 _RAW_FLOOR = 0.0
+
+
+def _require(params: Params, key: str) -> float:
+    """Fetch a REQUIRED Params key, raising an explicit error when absent.
+
+    @MX:NOTE: [AUTO] TBD-[B] values (raw_saturation_threshold) are never given a
+    silent in-module default (SWR-000-5 / no-silent-default). The caller must
+    inject the dose-step response saturation point (appendix A); a missing key
+    is a configuration error, not a reason to invent ~0.98*full-scale.
+    """
+    value = params.get(key)
+    if value is None:
+        raise ValueError(f"offset: missing required parameter '{key}'")
+    return float(value)
 
 
 def _read_offset(calib: CalibSet, shape: tuple[int, ...]) -> np.ndarray:
@@ -69,9 +86,17 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     """
     o_map = _read_offset(calib, frame.shape)
 
-    corrected, clamp_rate = _subtract_clamp(
-        np.asarray(frame.pixel, dtype=np.float64), o_map
-    )
+    # REQ-CORR-OFFSET-4: raw saturation detection BEFORE subtraction. offset is
+    # the only stage that receives I_raw, so it is the sole locus of raw
+    # saturation detection (SPEC-LNSG-001 decision 2). Pixels with I_raw >= S_th
+    # are flagged SATURATION; the flag accumulates (union) with the gain-clamp
+    # SATURATION downstream and is consumed by the T3 saturation module.
+    s_th = _require(params, P_RAW_SAT)
+    raw_in = np.asarray(frame.pixel, dtype=np.float64)
+    raw_sat = raw_in >= s_th
+    raw_sat_rate = float(np.count_nonzero(raw_sat)) / raw_sat.size
+
+    corrected, clamp_rate = _subtract_clamp(raw_in, o_map)
     out_pixel = corrected.astype(frame.pixel.dtype)
 
     out_f64: np.ndarray | None = None
@@ -79,6 +104,11 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
         out_f64, _ = _subtract_clamp(np.asarray(frame.pixel_f64, dtype=np.float64), o_map)
 
     new = frame.with_pixel(out_pixel, out_f64)
+
+    if raw_sat.any():
+        new_masks = np.asarray(frame.masks, dtype=np.uint8).copy()
+        new_masks[raw_sat] |= np.uint8(MaskFlag.SATURATION)
+        new = _with_masks(new, new_masks)
 
     # Initialize the read-noise sigma from the offset calibration when supplied
     # (SWR-101); alpha is untouched — correction modules do not re-estimate the
@@ -92,7 +122,7 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
         module_version=MODULE_VERSION,
         params_hash=params.hash(),
         calibset_id=calib.calibset_id,
-        extra={"neg_clamp_rate": clamp_rate},
+        extra={"neg_clamp_rate": clamp_rate, "raw_sat_rate": raw_sat_rate},
     )
     return new.record_history(entry)
 
@@ -101,3 +131,9 @@ def _with_noise(frame: XFrame, noise: NoiseModel) -> XFrame:
     from dataclasses import replace
 
     return replace(frame, noise=noise)
+
+
+def _with_masks(frame: XFrame, masks: np.ndarray) -> XFrame:
+    from dataclasses import replace
+
+    return replace(frame, masks=masks)

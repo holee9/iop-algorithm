@@ -33,10 +33,12 @@ import pytest
 _SKELETONS = [
     ("XDET-TC-004", "lag correction: first-frame lag % vs EV-104 (T4/WP2)"),
     ("XDET-TC-005", "lag correction: ghost residual CNR vs EV-104 (T4/WP2)"),
-    ("XDET-TC-006", "line noise / reference-absent path (T3/WP3)"),
-    ("XDET-TC-007", "line noise (T3/WP3)"),
-    ("XDET-TC-008", "saturation / geometry (T3/WP4)"),
-    ("XDET-TC-009", "saturation / geometry (T3/WP4)"),
+    # TC-006/007 (line noise) and TC-008/009 (saturation/geometry) are the
+    # T3/WP3+WP4 release gates; they are now LIVE in
+    # tests/modules/test_tc_lnsg.py and therefore removed from this deferred
+    # list. TC-008 is a T3 PARTIAL gate (mask integration / boundary band /
+    # no-restoration mechanism); the end-to-end boundary-artifact-invisible
+    # judgment re-runs at T5/T6 (spec decision 4).
     ("XDET-TC-010", "VST GAT + unbiased inverse (T5/WP5)"),
     ("XDET-TC-011", "BM3D + mask weighting (T5/WP5)"),
     ("XDET-TC-012", "MSE / DRC (T6/WP6)"),

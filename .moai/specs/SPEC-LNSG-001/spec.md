@@ -1,7 +1,7 @@
 ---
 id: SPEC-LNSG-001
-version: 0.1.1
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-07-09
 updated: 2026-07-09
 author: drake.lee
@@ -19,6 +19,12 @@ XDET 영상처리 SW P1의 네 번째 작업 T3(WP3+WP4). line noise 보정·포
 - 구현 계획: [plan.md](./plan.md) · 인수 기준: [acceptance.md](./acceptance.md)
 
 ## HISTORY
+
+- **v0.2.0 (2026-07-09)** — 구현 완료(status: implemented). 커밋 7ab0338(모듈 3종+OFFSET-4) + 리뷰 결함 10건 수정. 156 passed / 14 skipped(2회 동일), 레이어링 계약 5건 KEPT. 구현 중 확정:
+  - geometry 활성 보정은 마스크 스택을 비트플레인별 nearest-neighbor 역워프로 수송하고, 경계 충전 픽셀은 DEFECT로 무효화.
+  - MaskFlag.SATURATION_BAND(=8) 신설 — 2px 경계 밴드는 core SATURATION과 분리(멱등성). T5 소비자는 두 플래그를 함께 제외해야 함.
+  - line_noise는 SATURATION 픽셀 값을 변경하지 않음(클램프 보존). 고역 제한은 FFT 저역 컷 방식(비주기 wrap-seam은 [T] 경계 내 문서화).
+  - raw_saturation_threshold는 offset 필수 Params([B], 무단 기본값 대체 금지).
 
 - **v0.1.1 (2026-07-09)** — plan-audit iteration 1 (PASS 0.89; D1 mandatory + ambiguity-2 BLOCK) 결함 반영 + orchestrator 결정 2 확정:
   - **결정 2 확정(raw 포화 검출 = offset 단계)**: raw 포화 검출(I_raw ≥ S_th)은 I_raw를 입력 프레임으로 받는 유일한 단계인 첫 파이프라인 단계 **offset**이 감산 전에 수행하며(SPEC-CORR-001 REQ-CORR-OFFSET-4로 이관, v0.2.1), S_th는 offset 단계 Params 키 `raw_saturation_threshold`([B])에 단일 소재한다. T3 포화 모듈은 offset(raw) ∪ gain 클램프로 누적된 SATURATION 마스크를 소비하여 경계 밴드 2px 팽창·복원 금지 사후조건·통계 메타데이터만 담당한다. **rationale**: 처리 모듈 계약(`process(XFrame,CalibSet,Params)->XFrame`)은 보존된 중간 XFrame에 접근할 수 없어 후반 단계가 raw를 재검출할 수 없다. REQ-LNSG-SAT-1·Environment·「결정 필요/확인 사항」 2 정정.

@@ -140,5 +140,31 @@ def combine_masks(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def dilate_mask(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Morphologically dilate a mask. Not implemented at T0."""
-    raise NotImplementedError("mask_ops.dilate_mask is a T0 stub")
+    """Morphologically dilate a boolean mask by `radius` pixels.
+
+    @MX:ANCHOR: [AUTO] Single source of mask dilation shared by the saturation
+    boundary-band module (SWR-602 W_band) and any downstream consumer.
+    @MX:REASON: the 2px saturation boundary band (SWR-602) must be produced by
+    exactly one dilation rule; a divergent structuring element would change the
+    buffer-weighting substrate handed to the T5 denoiser.
+
+    Uses 8-connectivity (Chebyshev distance): `radius` iterations grow the mask
+    into a square band of half-width `radius`.
+
+    `radius` MUST be a positive integer. A fractional radius in (0, 1) would
+    truncate to iterations=0, which scipy.ndimage.binary_dilation interprets as
+    "dilate until convergence" and floods the entire frame (review finding 8);
+    a non-integer or non-positive radius therefore raises ValueError rather than
+    silently producing a wrong band.
+    """
+    if isinstance(radius, bool) or not isinstance(radius, (int, np.integer)):
+        raise ValueError(
+            f"dilate_mask: radius must be a positive integer, got {radius!r}"
+        )
+    if radius <= 0:
+        raise ValueError(
+            f"dilate_mask: radius must be a positive integer, got {radius!r}"
+        )
+    m = np.asarray(mask, dtype=bool)
+    struct = _STRUCT_8
+    return ndimage.binary_dilation(m, structure=struct, iterations=int(radius))

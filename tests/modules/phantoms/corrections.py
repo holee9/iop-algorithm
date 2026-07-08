@@ -30,6 +30,10 @@ _CORR_DEFAULTS.update(
         "defect_line_min": 8,  # [T] row/col run length -> LINE (SWR-302)
         "defect_line_max_width": 1,  # [T] max perpendicular extent of a LINE
         "defect_cmax_pixels": 25,  # [T] C_max 5x5 -> 25 px connected cluster
+        # [B] raw saturation point S_th (SWR-601, dose-step response pending
+        # real measurement, appendix A). Injected here as a documented test
+        # default; the offset module REQUIRES it (no silent in-module default).
+        "raw_saturation_threshold": 0.98 * 65535.0,  # ~= 64224.3
     }
 )
 
