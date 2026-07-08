@@ -1,8 +1,15 @@
-"""Shared component stub: FFT / power spectral density
-(SWR-000-9, REQ-INFRA-STATIC-3).
+"""Shared component: FFT / power spectral density (SWR-000-9, REQ-INFRA-STATIC-3).
 
-@MX:NOTE: [AUTO] T0 interface stub only; algorithm deferred to first consumer
-(e.g. NPS/PSD at T1, grid suppression at T7).
+@MX:ANCHOR: [AUTO] Single implementation of the 2D FFT / PSD primitives shared
+by the metrics engine (NPS/DQE) and later grid-suppression (T7). Consumers must
+reference these functions, never re-implement FFT/PSD locally (SWR-000-9 no
+duplication).
+@MX:REASON: fan_in spans metrics.nps, metrics.dqe (via nps), and future
+modules/grid; a divergent PSD normalization would silently corrupt every
+downstream NPS/DQE value.
+
+First real definition triggered by SPEC-METRICS-001 (T1). Accuracy is the single
+goal; no speed optimization (P2).
 """
 
 from __future__ import annotations
@@ -11,5 +18,100 @@ import numpy as np
 
 
 def compute_psd(image: np.ndarray) -> np.ndarray:
-    """Compute the 2D power spectral density. Not implemented at T0."""
-    raise NotImplementedError("fft_psd.compute_psd is a T0 stub")
+    """2D power spectral density of a single (zero-mean) ROI, fftshift-centred.
+
+    Returns |FFT(image)|**2 with the zero-frequency component at the array
+    centre. The caller is responsible for detrending; this primitive does not
+    subtract any trend so it stays a pure spectral estimator.
+    """
+    arr = np.asarray(image, dtype=np.float64)
+    spectrum = np.fft.fft2(arr)
+    return np.fft.fftshift(np.abs(spectrum) ** 2)
+
+
+def nps_2d(
+    rois: np.ndarray,
+    pixel_area_mm2: float,
+) -> np.ndarray:
+    """Ensemble-averaged 2D noise power spectrum (NPS), fftshift-centred.
+
+    NPS(u,v) = (dx*dy) / (Nx*Ny) * < |DFT{roi}|^2 >  over the ROI ensemble,
+    where each ROI is zero-mean (detrended by the caller). For white noise of
+    variance s^2 this yields a flat NPS at level s^2 * dx * dy — the analytic
+    identity the synthetic-validation phantoms check against.
+
+    Args:
+        rois: array of shape (n_roi, Ny, Nx), each ROI already detrended.
+        pixel_area_mm2: dx*dy in mm^2 (from the panel pitch, CalibSet/Params).
+    """
+    stack = np.asarray(rois, dtype=np.float64)
+    if stack.ndim != 3:
+        raise ValueError("rois must have shape (n_roi, Ny, Nx)")
+    n_roi, ny, nx = stack.shape
+    acc = np.zeros((ny, nx), dtype=np.float64)
+    for roi in stack:
+        acc += np.abs(np.fft.fft2(roi)) ** 2
+    acc /= n_roi
+    acc *= pixel_area_mm2 / (nx * ny)
+    return np.fft.fftshift(acc)
+
+
+def radial_frequency_axes(
+    ny: int, nx: int, pitch_mm: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return fftshift-aligned spatial-frequency axes (lp/mm) for a NY x NX NPS.
+
+    The sample spacing is the panel pitch, so the axis extends to the detector
+    Nyquist 1/(2*pitch) at the array edge.
+    """
+    fy = np.fft.fftshift(np.fft.fftfreq(ny, d=pitch_mm))
+    fx = np.fft.fftshift(np.fft.fftfreq(nx, d=pitch_mm))
+    return fy, fx
+
+
+def axial_1d_nps(
+    nps2d: np.ndarray,
+    pitch_mm: float,
+    *,
+    exclude_axis_bins: int = 1,
+    n_average_lines: int = 7,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract the 1D axial NPS by averaging lines adjacent to the axes.
+
+    IEC 62220-1: the two central rows/columns (the axes themselves) carry
+    residual low-frequency trend and are excluded; a band of lines on either
+    side is averaged. Positive frequencies (0 .. Nyquist) are returned.
+
+    Args:
+        nps2d: fftshift-centred 2D NPS.
+        pitch_mm: panel pitch (mm).
+        exclude_axis_bins: number of central bins on each side to skip [P].
+        n_average_lines: number of off-axis lines averaged per side [P].
+
+    Returns:
+        (freq_lpmm, nps_1d) over the non-negative frequency half-axis.
+    """
+    ny, nx = nps2d.shape
+    cy, cx = ny // 2, nx // 2
+    # Rows adjacent to the horizontal axis (average |offset| in a band).
+    lo = exclude_axis_bins
+    hi = exclude_axis_bins + n_average_lines
+    row_band = np.concatenate(
+        [nps2d[cy - hi : cy - lo, :], nps2d[cy + lo + 1 : cy + hi + 1, :]], axis=0
+    )
+    col_band = np.concatenate(
+        [nps2d[:, cx - hi : cx - lo], nps2d[:, cx + lo + 1 : cx + hi + 1]], axis=1
+    )
+    horiz = row_band.mean(axis=0)  # 1D over x (length nx)
+    vert = col_band.mean(axis=1)  # 1D over y (length ny)
+
+    fx = np.fft.fftshift(np.fft.fftfreq(nx, d=pitch_mm))
+    fy = np.fft.fftshift(np.fft.fftfreq(ny, d=pitch_mm))
+    # Combine the two orthogonal 1D estimates onto the positive half-axis by
+    # interpolating the vertical estimate onto the horizontal frequency grid.
+    pos = fx >= 0
+    freq = fx[pos]
+    horiz_pos = horiz[pos]
+    vert_interp = np.interp(freq, fy, vert)
+    nps_1d = 0.5 * (horiz_pos + vert_interp)
+    return freq, nps_1d
