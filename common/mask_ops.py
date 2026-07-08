@@ -140,5 +140,20 @@ def combine_masks(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def dilate_mask(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Morphologically dilate a mask. Not implemented at T0."""
-    raise NotImplementedError("mask_ops.dilate_mask is a T0 stub")
+    """Morphologically dilate a boolean mask by `radius` pixels.
+
+    @MX:ANCHOR: [AUTO] Single source of mask dilation shared by the saturation
+    boundary-band module (SWR-602 W_band) and any downstream consumer.
+    @MX:REASON: the 2px saturation boundary band (SWR-602) must be produced by
+    exactly one dilation rule; a divergent structuring element would change the
+    buffer-weighting substrate handed to the T5 denoiser.
+
+    Uses 8-connectivity (Chebyshev distance): `radius` iterations grow the mask
+    into a square band of half-width `radius`. radius <= 0 returns a copy of the
+    input mask unchanged.
+    """
+    m = np.asarray(mask, dtype=bool)
+    if radius <= 0:
+        return m.copy()
+    struct = _STRUCT_8
+    return ndimage.binary_dilation(m, structure=struct, iterations=int(radius))

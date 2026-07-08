@@ -50,8 +50,8 @@ def _expected(stage, frame, calib, params):
     if stage == "offset":
         pix = base - 100.0
         entry = HistoryEntry(
-            "offset", "1.0.0", params.hash(), calib.calibset_id,
-            {"neg_clamp_rate": 0.0},
+            "offset", "1.1.0", params.hash(), calib.calibset_id,
+            {"neg_clamp_rate": 0.0, "raw_sat_rate": 0.0},
         )
     elif stage == "gain":
         pix = base * 1.25

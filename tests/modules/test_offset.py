@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from common.xframe import new_frame
+from common.xframe import MaskFlag, new_frame
 from modules import offset
 from tests.modules.phantoms.corrections import EV, corr_params, offset_calib
 
@@ -69,6 +69,41 @@ def test_scenario10_dark_residual_within_sigma_fraction():
     assert resid_mean <= threshold, (resid_mean, threshold)
     # sigma_d initialized the noise model from calibration (SWR-101).
     assert out.noise.sigma == pytest.approx(10.0)
+
+
+def test_raw_saturation_flagged_before_subtraction():
+    """REQ-CORR-OFFSET-4: pixels with I_raw >= S_th get the SATURATION flag,
+    detected on the raw input BEFORE dark subtraction."""
+    shape = (8, 8)
+    s_th = 60000.0
+    raw = np.full(shape, 3000.0, dtype=np.float32)
+    raw[2, 3] = 65000.0  # >= S_th -> raw-saturated
+    raw[5, 6] = 64000.0  # >= S_th -> raw-saturated
+    o = np.full(shape, 100.0, dtype=np.float64)
+    frame = new_frame(raw)
+
+    out = offset.process(
+        frame, offset_calib(o), corr_params(raw_saturation_threshold=s_th)
+    )
+
+    sat = (out.masks & int(MaskFlag.SATURATION)) != 0
+    assert sat[2, 3] and sat[5, 6]
+    assert np.count_nonzero(sat) == 2
+    # Detection is on I_raw: the saturated pixels are still subtracted/clamped
+    # normally (no restoration here), and the raw_sat_rate is on the history.
+    assert out.history[-1].extra["raw_sat_rate"] == 2.0 / raw.size
+    # Input immutability preserved.
+    assert np.array_equal(frame.pixel, raw)
+
+
+def test_raw_saturation_default_threshold_no_false_positive():
+    """Sub-threshold frames raise no SATURATION flag under the [B] default."""
+    shape = (8, 8)
+    raw = np.full(shape, 3000.0, dtype=np.float32)
+    frame = new_frame(raw)
+    out = offset.process(frame, offset_calib(np.zeros(shape)), corr_params())
+    assert np.count_nonzero(out.masks & int(MaskFlag.SATURATION)) == 0
+    assert out.history[-1].extra["raw_sat_rate"] == 0.0
 
 
 def test_scenario12_optional_dynamic_offset_applied():
