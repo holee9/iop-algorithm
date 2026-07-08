@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xdet"
+version = "0.1.0"
+description = "XDET X-ray image processing SW P1 golden model (T0 framework scaffold)"
+requires-python = ">=3.11"
+authors = [{ name = "drake.lee" }]
+# Accuracy is the single goal at P1; no speed optimization (CLAUDE.md, SWR-000-1).
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "import-linter>=2.0",
+]
+
+[tool.setuptools]
+# Flat top-level packages per CLAUDE.md scaffold (no src/ layout).
+packages = ["common", "modules", "pipeline", "metrics"]
+
+[tool.pytest.ini_options]
+# Root on sys.path so `common`, `pipeline`, and `tests.fixtures.*` import
+# without requiring an editable install step in CI.
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
+
+# ---------------------------------------------------------------------------
+# import-linter: declarative layering contract enforcing the dependency
+# direction rule (SWR-000-8, REQ-INFRA-STATIC). module -> common is the only
+# permitted direction; common must not import upward; modules must not import
+# each other. Run via: `uv run lint-imports`.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_packages = ["common", "modules", "pipeline", "metrics"]
+
+[[tool.importlinter.contracts]]
+name = "Processing layers: pipeline -> modules -> common (downward only)"
+type = "layers"
+layers = [
+    "pipeline",
+    "modules",
+    "common",
+]
+
+[[tool.importlinter.contracts]]
+name = "Metrics may depend on common, never the reverse"
+type = "layers"
+layers = [
+    "metrics",
+    "common",
+]
+
+[[tool.importlinter.contracts]]
+name = "common is foundational: it must not import upward"
+type = "forbidden"
+source_modules = ["common"]
+forbidden_modules = ["modules", "pipeline", "metrics"]
+
+[[tool.importlinter.contracts]]
+name = "Processing modules are mutually independent (no horizontal imports)"
+type = "independence"
+# Submodule package list grows as processing modules are added (T2+).
+# Empty at T0 (no algorithm modules exist yet); the contract is a no-op
+# placeholder until modules/<name>/ packages appear.
+modules = []
