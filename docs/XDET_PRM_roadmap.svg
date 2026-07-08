@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="480" viewBox="0 0 680 480" role="img" font-family="Malgun Gothic, Apple SD Gothic Neo, sans-serif">
+<title>X-ray FPD PRM product roadmap</title>
+<desc>3개 제품 라인을 Gen 1~3 세대별로 배치하고 하단에 SKU tier를 표시한 제품 로드맵</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="680" height="480" fill="#FFFFFF"/>
+<line x1="135" y1="58" x2="628" y2="58" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="215" y="44" text-anchor="middle" font-size="12" fill="#5F5E5A">Gen 1 결정론적</text>
+<text x="390" y="44" text-anchor="middle" font-size="12" fill="#5F5E5A">Gen 2 딥러닝+PCCP</text>
+<text x="560" y="44" text-anchor="middle" font-size="12" fill="#5F5E5A">Gen 3 차세대</text>
+<line x1="302" y1="68" x2="302" y2="400" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 4"/>
+<line x1="477" y1="68" x2="477" y2="400" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 4"/>
+<text x="44" y="108" font-size="14" font-weight="500" fill="#2C2C2A">Core library</text>
+<rect x="135" y="80" width="160" height="48" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/><text x="215" y="101" text-anchor="middle" font-size="14" font-weight="500" fill="#085041">Core v1</text><text x="215" y="118" text-anchor="middle" font-size="12" fill="#0F6E56">보정·고전 노이즈 저감</text>
+<rect x="310" y="80" width="160" height="48" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/><text x="390" y="101" text-anchor="middle" font-size="14" font-weight="500" fill="#085041">Core v2 + DL</text><text x="390" y="118" text-anchor="middle" font-size="12" fill="#0F6E56">딥러닝 노이즈 저감</text>
+<rect x="485" y="80" width="150" height="48" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/><text x="560" y="101" text-anchor="middle" font-size="14" font-weight="500" fill="#085041">Core v3</text><text x="560" y="118" text-anchor="middle" font-size="12" fill="#0F6E56">확산모델·자가지도</text>
+<text x="44" y="192" font-size="14" font-weight="500" fill="#2C2C2A">Medical DR</text>
+<rect x="135" y="150" width="160" height="48" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="215" y="171" text-anchor="middle" font-size="14" font-weight="500" fill="#3C3489">Medical v1</text><text x="215" y="188" text-anchor="middle" font-size="12" fill="#534AB7">MSE·DRC·GLS·GSDF</text>
+<rect x="135" y="206" width="160" height="48" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="215" y="227" text-anchor="middle" font-size="14" font-weight="500" fill="#3C3489">Virtual grid</text><text x="215" y="244" text-anchor="middle" font-size="12" fill="#534AB7">커널 산란보정 (v1 후반)</text>
+<rect x="310" y="150" width="160" height="48" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="390" y="171" text-anchor="middle" font-size="14" font-weight="500" fill="#3C3489">Medical v2</text><text x="390" y="188" text-anchor="middle" font-size="12" fill="#534AB7">DL scatter + PCCP</text>
+<rect x="485" y="150" width="150" height="48" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="560" y="171" text-anchor="middle" font-size="14" font-weight="500" fill="#3C3489">Medical v3</text><text x="560" y="188" text-anchor="middle" font-size="12" fill="#534AB7">DL GLS·지속학습</text>
+<text x="44" y="316" font-size="14" font-weight="500" fill="#2C2C2A">NDT post</text>
+<rect x="135" y="288" width="160" height="48" rx="4" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="215" y="309" text-anchor="middle" font-size="14" font-weight="500" fill="#712B13">NDT v1</text><text x="215" y="326" text-anchor="middle" font-size="12" fill="#993C1D">적산·두께보정·IQI</text>
+<rect x="310" y="288" width="160" height="48" rx="4" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="390" y="309" text-anchor="middle" font-size="14" font-weight="500" fill="#712B13">NDT v2</text><text x="390" y="326" text-anchor="middle" font-size="12" fill="#993C1D">ADR 파일럿</text>
+<rect x="485" y="288" width="150" height="48" rx="4" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="560" y="309" text-anchor="middle" font-size="14" font-weight="500" fill="#712B13">NDT v3</text><text x="560" y="326" text-anchor="middle" font-size="12" fill="#993C1D">ADR 상용·POD 검증</text>
+<text x="44" y="447" font-size="14" font-weight="500" fill="#2C2C2A">SKU tier</text>
+<rect x="135" y="416" width="150" height="48" rx="4" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/><text x="210" y="437" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Tier 1 CPU</text><text x="210" y="454" text-anchor="middle" font-size="12" fill="#5F5E5A">결정론적 기능 전체</text>
+<rect x="300" y="416" width="180" height="48" rx="4" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/><text x="390" y="437" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Tier 2 GPU baseline</text><text x="390" y="454" text-anchor="middle" font-size="12" fill="#5F5E5A">딥러닝 포함 기준 SKU</text>
+<rect x="495" y="416" width="140" height="48" rx="4" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/><text x="565" y="437" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Tier 3 high-end</text><text x="565" y="454" text-anchor="middle" font-size="12" fill="#5F5E5A">full 해상도 DL</text>
+</svg>
