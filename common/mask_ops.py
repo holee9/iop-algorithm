@@ -55,6 +55,85 @@ def label_components(
     return labels, int(n)
 
 
+def component_sizes(mask: np.ndarray, connectivity: int = 8) -> list[int]:
+    """Pixel size of every connected component in `mask` (background excluded).
+
+    @MX:ANCHOR: [AUTO] Single source of the C_max component-size measurement
+    shared by the defect-map builder and the correction module.
+    @MX:REASON: both gates (metrics.defect_map generation-time and
+    modules.defect consumption-time) must measure cluster size identically or
+    the two C_max gates silently drift (review finding 8).
+    """
+    labels, n = label_components(mask, connectivity=connectivity)
+    if n == 0:
+        return []
+    counts = np.bincount(labels.ravel())
+    return [int(counts[lbl]) for lbl in range(1, n + 1)]
+
+
+def max_component_size(mask: np.ndarray, connectivity: int = 8) -> int:
+    """Largest connected-component size in `mask` (0 when empty)."""
+    sizes = component_sizes(mask, connectivity=connectivity)
+    return max(sizes) if sizes else 0
+
+
+def _fill_run_lengths(line_bool: np.ndarray, line_out: np.ndarray) -> None:
+    """Write, for each True cell of the 1-D `line_bool`, its maximal
+    consecutive-True run length into the aligned `line_out` view."""
+    n = int(line_bool.size)
+    i = 0
+    while i < n:
+        if line_bool[i]:
+            j = i
+            while j < n and line_bool[j]:
+                j += 1
+            line_out[i:j] = j - i
+            i = j
+        else:
+            i += 1
+
+
+def _run_length_map(mask: np.ndarray, axis: int) -> np.ndarray:
+    """For each True pixel, the length of its maximal consecutive-True run along
+    `axis` (axis=1 -> horizontal runs per row, axis=0 -> vertical runs per col)."""
+    m = np.asarray(mask, dtype=bool)
+    out = np.zeros(m.shape, dtype=np.int64)
+    if axis == 1:
+        for r in range(m.shape[0]):
+            _fill_run_lengths(m[r, :], out[r, :])
+    else:
+        for c in range(m.shape[1]):
+            _fill_run_lengths(m[:, c], out[:, c])
+    return out
+
+
+def thin_line_masks(
+    mask: np.ndarray, line_min: int, line_max_width: int = 1
+) -> tuple[np.ndarray, np.ndarray]:
+    """Classify LINE pixels by the THIN-run rule (SWR-302, review finding 1).
+
+    A pixel is a horizontal LINE pixel when it lies on a horizontal run of
+    length >= line_min whose perpendicular (vertical) extent is <=
+    line_max_width; symmetrically for vertical LINE pixels. A solid blob (whose
+    runs reach line_min but whose perpendicular extent exceeds line_max_width)
+    is therefore NOT a line and falls through to the cluster gate.
+
+    @MX:ANCHOR: [AUTO] Single source of the line-vs-blob thinness rule shared by
+    the builder classifier and the module orientation/gate.
+    @MX:REASON: builder morphology and module orientation/C_max gate must agree
+    on what counts as a line or the two sides silently disagree (finding 1/8).
+
+    Returns:
+        (h_line, v_line) boolean masks (a crossing pixel may be in both).
+    """
+    m = np.asarray(mask, dtype=bool)
+    h_len = _run_length_map(m, axis=1)
+    v_len = _run_length_map(m, axis=0)
+    h_line = (h_len >= line_min) & (v_len <= line_max_width) & m
+    v_line = (v_len >= line_min) & (h_len <= line_max_width) & m
+    return h_line, v_line
+
+
 def combine_masks(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Bitwise-combine two mask stacks. Not implemented at T0."""
     raise NotImplementedError("mask_ops.combine_masks is a T0 stub")

@@ -7,7 +7,7 @@ import pytest
 
 from common.calibset import CalibKind
 from common.contract import check_process_contract, run_harness
-from common.xframe import MaskFlag, new_frame
+from common.xframe import HistoryEntry, MaskFlag, XFrame, new_frame
 from modules import defect, gain, offset
 from pipeline.orchestrator import (
     CalibrationError,
@@ -36,6 +36,43 @@ def _calibs():
     }
 
 
+def _expected(stage, frame, calib, params):
+    """Independent analytic expected XFrame (review finding 9).
+
+    Pixel/mask/history are derived from first principles with plain numpy, NOT
+    by calling module.process, so the harness comparison is non-circular. The
+    input fixture is uniform 2000.0 with an all-NORMAL defect map, so offset
+    subtracts 100 (no clamp), gain multiplies by 1.25 (no clamp / no hand-off),
+    and defect leaves the frame untouched.
+    """
+    base = np.full(_SHAPE, 2000.0, dtype=np.float64)
+    masks = frame.masks  # no stage flags any pixel for this fixture
+    if stage == "offset":
+        pix = base - 100.0
+        entry = HistoryEntry(
+            "offset", "1.0.0", params.hash(), calib.calibset_id,
+            {"neg_clamp_rate": 0.0},
+        )
+    elif stage == "gain":
+        pix = base * 1.25
+        entry = HistoryEntry(
+            "gain", "1.0.0", params.hash(), calib.calibset_id,
+            {"upper_clamp_rate": 0.0, "invalid_gain_rate": 0.0},
+        )
+    else:  # defect: all-NORMAL map, nothing corrected
+        pix = base
+        entry = HistoryEntry(
+            "defect", "1.0.0", params.hash(), calib.calibset_id,
+            {"defect_pixels": 0, "interpolated_pixels": 0, "uncorrected_pixels": 0},
+        )
+    return XFrame(
+        pixel=pix.astype(np.float32),
+        masks=masks,
+        noise=frame.noise,
+        history=frame.history + (entry,),
+    )
+
+
 @pytest.mark.parametrize(
     "module,stage",
     [(offset, "offset"), (gain, "gain"), (defect, "defect")],
@@ -44,7 +81,7 @@ def test_scenario11_signature_and_harness(module, stage):
     assert check_process_contract(module) == ()
     frame, params = _frame(), corr_params()
     calib = _calibs()[stage]
-    expected = module.process(frame, calib, params)
+    expected = _expected(stage, frame, calib, params)
     report = run_harness(module, frame, calib, params, expected)
     assert report.passed, report.violations
     # Deterministic reproduction: input frame unchanged (immutability).

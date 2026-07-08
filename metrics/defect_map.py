@@ -25,10 +25,11 @@ import numpy as np
 
 from common.calibset import CalibKind, CalibProvenance, CalibSet
 from common.contract import Params
-from common.mask_ops import DefectMorphology, label_components
+from common.mask_ops import DefectMorphology, label_components, thin_line_masks
 from metrics.defect_stats import DefectClass, classify_defects
 
 P_LINE_MIN = "defect_line_min"  # min row/col run length for a LINE (>=8) [T]
+P_LINE_MAX_WIDTH = "defect_line_max_width"  # max perpendicular extent of a LINE [T]
 P_CMAX = "defect_cmax_pixels"  # max connected cluster size (5x5 -> 25) [T]
 
 
@@ -43,46 +44,22 @@ def _require_int(params: Params, key: str) -> int:
     return int(value)
 
 
-def _runs_ge(row: np.ndarray, min_len: int) -> np.ndarray:
-    """Boolean mask of a 1-D array where a True-run has length >= min_len."""
-    out = np.zeros(row.shape, dtype=bool)
-    n = row.size
-    i = 0
-    while i < n:
-        if row[i]:
-            j = i
-            while j < n and row[j]:
-                j += 1
-            if (j - i) >= min_len:
-                out[i:j] = True
-            i = j
-        else:
-            i += 1
-    return out
-
-
-def _line_mask(defect: np.ndarray, line_min: int) -> np.ndarray:
-    """Mark pixels belonging to a horizontal or vertical run >= line_min."""
-    mask = np.zeros(defect.shape, dtype=bool)
-    for r in range(defect.shape[0]):
-        mask[r, :] |= _runs_ge(defect[r, :], line_min)
-    for c in range(defect.shape[1]):
-        mask[:, c] |= _runs_ge(defect[:, c], line_min)
-    return mask & defect
-
-
 def classify_morphology(
-    defect: np.ndarray, line_min: int, cmax: int
+    defect: np.ndarray, line_min: int, cmax: int, line_max_width: int = 1
 ) -> np.ndarray:
     """Turn a boolean defect mask into a morphology class_map (SWR-302).
 
-    Row/col runs >= line_min => LINE; of the rest, connected components >= 2px
-    => CLUSTER, size-1 => SINGLE. Raises DefectMapBuildRefused when a cluster
-    exceeds C_max.
+    THIN row/col runs >= line_min (perpendicular extent <= line_max_width) =>
+    LINE; of the rest, connected components >= 2px => CLUSTER, size-1 => SINGLE.
+    A solid blob whose rows reach line_min but that is thicker than
+    line_max_width is NOT a line, so it reaches the C_max cluster gate
+    (review finding 1). Raises DefectMapBuildRefused when a cluster exceeds
+    C_max.
     """
     morph = np.full(defect.shape, DefectMorphology.NORMAL, dtype=np.int8)
 
-    line = _line_mask(defect, line_min)
+    h_line, v_line = thin_line_masks(defect, line_min, line_max_width)
+    line = h_line | v_line
     morph[line] = DefectMorphology.LINE
 
     remaining = defect & ~line
@@ -123,12 +100,14 @@ def build_defect_map(
     """
     line_min = _require_int(params, P_LINE_MIN)
     cmax = _require_int(params, P_CMAX)
+    line_max_width_val = params.get(P_LINE_MAX_WIDTH)
+    line_max_width = 1 if line_max_width_val is None else int(line_max_width_val)
 
     result = classify_defects(dark_frames, flat_frames, params)
     e2597 = np.asarray(result.get("class_map"))
     defect = e2597 != int(DefectClass.GOOD)
 
-    morph = classify_morphology(defect, line_min, cmax)
+    morph = classify_morphology(defect, line_min, cmax, line_max_width)
 
     return CalibSet(
         panel_id=panel_id,

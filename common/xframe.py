@@ -94,7 +94,7 @@ class HistoryEntry:
     module_version: str
     params_hash: str
     calibset_id: str | None
-    extra: Mapping[str, str] | None = None
+    extra: Mapping[str, str | int | float] | None = None
 
     def __post_init__(self) -> None:
         # Freeze a mapping copy so the recorded diagnostics cannot be mutated

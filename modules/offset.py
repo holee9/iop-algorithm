@@ -92,7 +92,7 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
         module_version=MODULE_VERSION,
         params_hash=params.hash(),
         calibset_id=calib.calibset_id,
-        extra={"neg_clamp_rate": repr(clamp_rate)},
+        extra={"neg_clamp_rate": clamp_rate},
     )
     return new.record_history(entry)
 

@@ -27,12 +27,36 @@ from tests.modules.phantoms.corrections import (
 from metrics.defect_map import build_defect_map
 
 
-def _correct(frame, o_scalar, g_scalar):
-    """Apply offset -> gain correction with uniform scalar maps."""
-    shape = frame.shape
+def _varying_maps(shape):
+    """Spatially VARYING, non-symmetric offset/gain maps (review finding 5).
+
+    A transposed or mis-broadcast G_map indexing bug changes the corrected
+    result because neither map equals its own transpose. Gain stays inside the
+    valid [0.5, 2.0] band so no range hand-off / clamping perturbs the algebra.
+    """
+    ny, nx = shape
+    r, c = np.mgrid[0:ny, 0:nx].astype(np.float64)
+    rr = r / max(ny - 1, 1)
+    cc = c / max(nx - 1, 1)
+    # Smooth 2D ramp offset (non-symmetric: distinct row/col slopes).
+    o_map = 100.0 + 40.0 * rr + 15.0 * cc
+    # Smooth gain ramp + a structured column parity pattern; within [0.5, 2.0].
+    col_pattern = 0.05 * (np.arange(nx) % 2)
+    g_map = 0.9 + 0.35 * rr + 0.2 * cc + col_pattern[None, :]
+    return o_map, g_map
+
+
+def _distort(true_pixel, o_map, g_map):
+    """Inject the known distortion through INDEPENDENT numpy expressions:
+    raw = true / G + O (so offset->gain correction recovers `true` exactly)."""
+    return (np.asarray(true_pixel, dtype=np.float64) / g_map + o_map).astype(np.float32)
+
+
+def _correct(frame, o_map, g_map):
+    """Apply offset -> gain correction with the spatially varying maps."""
     p = corr_params()
-    f1 = offset.process(frame, offset_calib(np.full(shape, o_scalar)), p)
-    return gain.process(f1, gain_calib(np.full(shape, g_scalar)), p)
+    f1 = offset.process(frame, offset_calib(o_map), p)
+    return gain.process(f1, gain_calib(g_map), p)
 
 
 def _midband(freqs, values, nyq):
@@ -90,14 +114,10 @@ def test_orchestrator_offset_gain_defect_recovers_scene():
 def test_tc002_mtf_nyquist_retention():
     edge = gen.make_slanted_edge(shape=(160, 160), angle_deg=2.0, sigma_px=0.6)
     true_frame = edge.frame
-    g_scalar, o_scalar = 1.25, 200.0
+    o_map, g_map = _varying_maps(true_frame.shape)
 
-    distorted = new_frame(
-        (np.asarray(true_frame.pixel, dtype=np.float64) / g_scalar + o_scalar).astype(
-            np.float32
-        )
-    )
-    corrected = _correct(distorted, o_scalar, g_scalar)
+    distorted = new_frame(_distort(true_frame.pixel, o_map, g_map))
+    corrected = _correct(distorted, o_map, g_map)
 
     params = corr_params()
     mtf_true = mtf.compute_mtf(true_frame, params)
@@ -115,21 +135,19 @@ def test_tc001_dqe_three_dose_no_degradation():
     params = corr_params()
     pitch = params.get("pixel_pitch_mm")
     nyq = 1.0 / (2.0 * pitch)
-    g_scalar, o_scalar = 1.25, 150.0
+    shape = (512, 512)
+    o_map, g_map = _varying_maps(shape)
 
-    for dose, sigma in (("XN/2", 70.0), ("XN", 50.0), ("2XN", 35.0)):
+    # Fixed explicit per-dose seeds (review finding 4): PYTHONHASHSEED-independent
+    # so the release gate is deterministic across runs.
+    for seed, (dose, sigma) in enumerate((("XN/2", 70.0), ("XN", 50.0), ("2XN", 35.0))):
         true = gen.make_white_noise_frames(
-            shape=(512, 512), n_frames=12, sigma=sigma, seed=hash(dose) % 100
+            shape=shape, n_frames=12, sigma=sigma, seed=seed
         )
         distorted = [
-            new_frame(
-                (np.asarray(f.pixel, dtype=np.float64) / g_scalar + o_scalar).astype(
-                    np.float32
-                )
-            )
-            for f in true.frames
+            new_frame(_distort(f.pixel, o_map, g_map)) for f in true.frames
         ]
-        corrected = [_correct(f, o_scalar, g_scalar) for f in distorted]
+        corrected = [_correct(f, o_map, g_map) for f in distorted]
 
         nnps_true = nps.compute_nps(true.frames, params).get("nnps")
         res_after = nps.compute_nps(corrected, params)
@@ -156,6 +174,7 @@ def test_tc003_residual_cluster_and_builder_miss_rate():
         singles=((5, 5), (50, 55)),
         lines=((20, 10, 8),),
         clusters=((35, 35, 2, 2),),
+        noisy=((45, 12),),  # dark/flat-path high-variance (E2597 NOISY) pixel
     )
     params = corr_params()
 
@@ -175,10 +194,18 @@ def test_tc003_residual_cluster_and_builder_miss_rate():
     miss_rate = missed / int(np.count_nonzero(stacks.planted))
     assert miss_rate <= EV["ev103_miss_rate_max"], miss_rate
 
-    # Residual-cluster leg: correct the flat stack, re-classify, expect no
-    # residual defect at the planted positions.
+    # Sensitivity meta-check: WITHOUT correction the residual scan DOES flag the
+    # planted defects (guards against a vacuously-passing gate, review finding 6).
+    pre = classify_defects(stacks.dark_frames, stacks.flat_frames, params)
+    pre_map = np.asarray(pre.get("class_map"))
+    assert int(np.count_nonzero((pre_map != DefectClass.GOOD) & stacks.planted)) > 0
+
+    # Residual-cluster leg: correct BOTH stacks (finding 6 — the dark stack was
+    # previously left uncorrected), re-classify against corrected data, expect
+    # no residual defect (including the noisy pixel) at the planted positions.
     corrected_flats = [defect.process(f, calib, params) for f in stacks.flat_frames]
-    residual = classify_defects(stacks.dark_frames, corrected_flats, params)
+    corrected_darks = [defect.process(f, calib, params) for f in stacks.dark_frames]
+    residual = classify_defects(corrected_darks, corrected_flats, params)
     residual_map = np.asarray(residual.get("class_map"))
     residual_at_planted = int(
         np.count_nonzero((residual_map != DefectClass.GOOD) & stacks.planted)

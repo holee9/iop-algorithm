@@ -66,17 +66,18 @@ def _read_gain(calib: CalibSet, shape: tuple[int, ...]) -> np.ndarray:
 
 def _apply_gain(
     pixel: np.ndarray, g_map: np.ndarray, valid: np.ndarray
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, np.ndarray]:
     """Multiply valid pixels by G, clamp to the 16-bit ceiling.
 
     Invalid-gain pixels keep the ungained input value (no G applied).
-    Returns (corrected, clamp_rate) where clamp_rate is over all pixels.
+    Returns (corrected, clamp_rate, over) where clamp_rate is over all pixels
+    and `over` is the boolean mask of clamped (saturated) pixels.
     """
     gained = np.where(valid, pixel * g_map, pixel)
     over = gained > _UPPER_LIMIT
     clamp_rate = float(np.count_nonzero(over)) / gained.size
     corrected = np.where(over, _UPPER_LIMIT, gained)
-    return corrected, clamp_rate
+    return corrected, clamp_rate, over
 
 
 def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
@@ -91,20 +92,23 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     valid = (g_map >= gain_min) & (g_map <= gain_max)
     invalid = ~valid
 
-    corrected, clamp_rate = _apply_gain(
+    corrected, clamp_rate, over = _apply_gain(
         np.asarray(frame.pixel, dtype=np.float64), g_map, valid
     )
     out_pixel = corrected.astype(frame.pixel.dtype)
 
     out_f64: np.ndarray | None = None
     if frame.pixel_f64 is not None:
-        out_f64, _ = _apply_gain(
+        out_f64, _, _ = _apply_gain(
             np.asarray(frame.pixel_f64, dtype=np.float64), g_map, valid
         )
 
     # Hand off out-of-range gain pixels as defect candidates (SWR-203).
     new_masks = np.asarray(frame.masks, dtype=np.uint8).copy()
     new_masks[invalid] |= np.uint8(MaskFlag.DEFECT)
+    # Flag 16-bit-clamped pixels SATURATION so the defect stage does not
+    # interpolate neighbours from clipped values (review finding 7).
+    new_masks[over] |= np.uint8(MaskFlag.SATURATION)
 
     new = frame.with_pixel(out_pixel, out_f64)
     new = _with_masks(new, new_masks)
@@ -115,8 +119,8 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
         params_hash=params.hash(),
         calibset_id=calib.calibset_id,
         extra={
-            "upper_clamp_rate": repr(clamp_rate),
-            "invalid_gain_rate": repr(float(np.count_nonzero(invalid)) / invalid.size),
+            "upper_clamp_rate": clamp_rate,
+            "invalid_gain_rate": float(np.count_nonzero(invalid)) / invalid.size,
         },
     )
     return new.record_history(entry)

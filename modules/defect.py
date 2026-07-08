@@ -36,7 +36,7 @@ import numpy as np
 
 from common.calibset import CalibSet
 from common.contract import Params
-from common.mask_ops import DefectMorphology, label_components
+from common.mask_ops import DefectMorphology, component_sizes, thin_line_masks
 from common.xframe import HistoryEntry, MaskFlag, XFrame
 
 MODULE_NAME = "defect"
@@ -45,6 +45,8 @@ MODULE_VERSION = "1.0.0"
 K_CLASS_MAP = "class_map"  # CalibSet(DEFECT) morphology labels (SWR-302)
 
 P_CMAX = "defect_cmax_pixels"  # max connected cluster size (5x5 -> 25) [T]
+P_LINE_MIN = "defect_line_min"  # min row/col run length for a LINE (>=8) [T]
+P_LINE_MAX_WIDTH = "defect_line_max_width"  # max perpendicular extent of a LINE [T]
 
 _VALID_LABELS = frozenset(int(m) for m in DefectMorphology)
 
@@ -97,13 +99,24 @@ def _read_class_map(calib: CalibSet, shape: tuple[int, ...]) -> np.ndarray:
     return morph.astype(np.int8)
 
 
-def _refuse_oversize_clusters(morph: np.ndarray, cmax: int) -> None:
-    cluster = morph == DefectMorphology.CLUSTER
+def _refuse_oversize_clusters(
+    morph: np.ndarray, cmax: int, line_min: int, line_max_width: int
+) -> None:
+    """Consumption-time C_max gate (DEFECT-4).
+
+    Applies the same THIN-run rule as the builder (review finding 1): a
+    LINE-labelled region that is not actually a thin run (a solid blob a
+    hand-crafted map mislabelled LINE) is treated as a cluster so it cannot
+    bypass the C_max gate. Genuine thin lines are exempt.
+    """
+    line_lbl = morph == DefectMorphology.LINE
+    h_line, v_line = thin_line_masks(line_lbl, line_min, line_max_width)
+    genuine_line = h_line | v_line
+    fat_line = line_lbl & ~genuine_line  # blob mislabelled LINE -> gate as cluster
+    cluster = (morph == DefectMorphology.CLUSTER) | fat_line
     if not cluster.any():
         return
-    labels, n = label_components(cluster, connectivity=8)
-    for lbl in range(1, n + 1):
-        size = int(np.count_nonzero(labels == lbl))
+    for size in component_sizes(cluster, connectivity=8):
         if size > cmax:
             raise DefectMapRefused(
                 f"defect: connected cluster of {size} px exceeds C_max ({cmax}); "
@@ -175,6 +188,7 @@ def _interp_cluster(
     best_value: float | None = None
     best_diff = np.inf
     single_fallback: float | None = None
+    single_dist = np.inf
     for dr, dc in _AXES:
         a = _ray(img, valid_normal, r, c, dr, dc)
         b = _ray(img, valid_normal, r, c, -dr, -dc)
@@ -184,30 +198,42 @@ def _interp_cluster(
                 best_diff = diff
                 best_value = _linear_two_sided(a, b)
         else:
-            got = _linear_two_sided(a, b)
-            if got is not None and single_fallback is None:
-                single_fallback = got
+            # One-sided (or none). Among one-sided axes pick the NEAREST anchor
+            # (review finding 3); ties break by axis order via strict `<`.
+            anchor = a if a is not None else b
+            if anchor is not None and anchor[1] < single_dist:
+                single_dist = anchor[1]
+                single_fallback = anchor[0]
     if best_value is not None:
         return best_value
     return single_fallback
 
 
-def _line_orientation(morph: np.ndarray) -> dict[tuple[int, int], tuple[int, int]]:
-    """Map each LINE pixel -> orthogonal interpolation axis, from its component's
-    bounding-box aspect (row-run -> interpolate vertically, and vice versa)."""
+def _line_orientation(
+    morph: np.ndarray, line_min: int, line_max_width: int
+) -> dict[tuple[int, int], tuple[int, int]]:
+    """Map each LINE pixel -> orthogonal interpolation axis, PER PIXEL by run
+    membership (review finding 2).
+
+    A pixel on a horizontal run interpolates vertically (dr,dc)=(1,0); a pixel
+    on a vertical run interpolates horizontally (0,1). A pixel on BOTH (a
+    crossing point) is omitted so the caller routes it to the cluster/
+    single-point branch instead of picking one wrong axis. This fixes the
+    per-component bounding-box heuristic that gave crossing/touching H+V lines
+    a single wrong axis.
+    """
     orientation: dict[tuple[int, int], tuple[int, int]] = {}
-    line = morph == DefectMorphology.LINE
-    if not line.any():
+    line_lbl = morph == DefectMorphology.LINE
+    if not line_lbl.any():
         return orientation
-    labels, n = label_components(line, connectivity=8)
-    for lbl in range(1, n + 1):
-        rows, cols = np.nonzero(labels == lbl)
-        row_extent = rows.max() - rows.min()
-        col_extent = cols.max() - cols.min()
-        # Horizontal run (wider than tall) -> orthogonal is vertical (dr,dc)=(1,0).
-        axis = (1, 0) if col_extent >= row_extent else (0, 1)
-        for rc in zip(rows.tolist(), cols.tolist()):
-            orientation[rc] = axis
+    h_line, v_line = thin_line_masks(line_lbl, line_min, line_max_width)
+    both = h_line & v_line
+    only_h = h_line & ~both
+    only_v = v_line & ~both
+    for r, c in zip(*np.nonzero(only_h)):
+        orientation[(int(r), int(c))] = (1, 0)
+    for r, c in zip(*np.nonzero(only_v)):
+        orientation[(int(r), int(c))] = (0, 1)
     return orientation
 
 
@@ -231,8 +257,13 @@ def _interpolate(
         if single_pixels[r, c]:
             value = _interp_single(img, valid_normal, r, c)
         elif label == DefectMorphology.LINE:
-            axis = line_orientation.get((r, c), (1, 0))
-            value = _interp_line(img, valid_normal, r, c, axis)
+            axis = line_orientation.get((r, c))
+            if axis is None:
+                # Crossing point / non-thin LINE pixel: no single orthogonal
+                # axis applies -> edge-directed cluster interpolation (finding 2).
+                value = _interp_cluster(img, valid_normal, r, c)
+            else:
+                value = _interp_line(img, valid_normal, r, c, axis)
         elif label == DefectMorphology.CLUSTER:
             value = _interp_cluster(img, valid_normal, r, c)
         else:  # pragma: no cover - defensive; defect_set is a strict union
@@ -252,21 +283,29 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     if cmax_val is None:
         raise ValueError(f"defect: missing required parameter '{P_CMAX}'")
     cmax = int(cmax_val)
+    line_min_val = params.get(P_LINE_MIN)
+    line_min = 8 if line_min_val is None else int(line_min_val)
+    line_max_width_val = params.get(P_LINE_MAX_WIDTH)
+    line_max_width = 1 if line_max_width_val is None else int(line_max_width_val)
 
     morph = _read_class_map(calib, frame.shape)
-    _refuse_oversize_clusters(morph, cmax)
+    _refuse_oversize_clusters(morph, cmax, line_min, line_max_width)
 
     masks_in = np.asarray(frame.masks, dtype=np.uint8)
     defect_flag = (masks_in & np.uint8(MaskFlag.DEFECT)) != 0
+    # Saturation-flagged (e.g. gain-clamped) pixels are excluded from anchors:
+    # interpolating a defect from a clipped 65535 value fabricates data
+    # (review finding 7, EC-3 no-fabrication principle).
+    sat_flag = (masks_in & np.uint8(MaskFlag.SATURATION)) != 0
 
     map_defect = morph != DefectMorphology.NORMAL
     defect_set = map_defect | defect_flag
-    valid_normal = ~defect_set
+    valid_normal = ~defect_set & ~sat_flag
     # single = map single-points OR gain hand-off (DEFECT flag, no map class).
     single_pixels = (morph == DefectMorphology.SINGLE) | (
         defect_flag & (morph == DefectMorphology.NORMAL)
     )
-    line_orientation = _line_orientation(morph)
+    line_orientation = _line_orientation(morph, line_min, line_max_width)
 
     out_pixel_f64, interpolated = _interpolate(
         np.asarray(frame.pixel, dtype=np.float64),
@@ -306,9 +345,9 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
         params_hash=params.hash(),
         calibset_id=calib.calibset_id,
         extra={
-            "defect_pixels": repr(n_defect),
-            "interpolated_pixels": repr(n_interp),
-            "uncorrected_pixels": repr(n_defect - n_interp),
+            "defect_pixels": n_defect,
+            "interpolated_pixels": n_interp,
+            "uncorrected_pixels": n_defect - n_interp,
         },
     )
     return new.record_history(entry)

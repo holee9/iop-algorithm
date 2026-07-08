@@ -36,7 +36,9 @@ def test_scenario4_upper_clamp_rate_in_history():
 
     assert np.all(out.pixel[:, 5:] == 65535.0)
     assert np.allclose(out.pixel[:, :5], 50000.0, atol=1.0)
-    assert out.history[-1].extra["upper_clamp_rate"] == repr(0.5)
+    # extra stores numerics natively (review finding 10), not as repr() strings.
+    assert out.history[-1].extra["upper_clamp_rate"] == 0.5
+    assert isinstance(out.history[-1].extra["upper_clamp_rate"], float)
 
 
 def test_scenario5_out_of_range_gain_handed_off_as_defect():

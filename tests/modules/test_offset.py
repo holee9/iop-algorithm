@@ -48,7 +48,9 @@ def test_scenario2_negative_clamp_rate_in_history():
     assert np.all(out.pixel[:, 5:] == 0.0)
     assert np.allclose(out.pixel[:, :5], 100.0, atol=0.5)
     expected_rate = 0.5
-    assert out.history[-1].extra["neg_clamp_rate"] == repr(expected_rate)
+    # extra stores numerics natively (review finding 10), not as repr() strings.
+    assert out.history[-1].extra["neg_clamp_rate"] == expected_rate
+    assert isinstance(out.history[-1].extra["neg_clamp_rate"], float)
 
 
 def test_scenario10_dark_residual_within_sigma_fraction():

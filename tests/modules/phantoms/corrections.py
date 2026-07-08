@@ -28,6 +28,7 @@ _CORR_DEFAULTS.update(
         "gain_min": 0.5,  # [T] valid gain lower bound
         "gain_max": 2.0,  # [T] valid gain upper bound
         "defect_line_min": 8,  # [T] row/col run length -> LINE (SWR-302)
+        "defect_line_max_width": 1,  # [T] max perpendicular extent of a LINE
         "defect_cmax_pixels": 25,  # [T] C_max 5x5 -> 25 px connected cluster
     }
 )
@@ -103,27 +104,37 @@ def make_defect_stacks(
     singles=((10, 10), (20, 40)),
     lines=(),  # each: (row, col0, length) horizontal run
     clusters=(),  # each: (row0, col0, h, w) block
+    noisy=(),  # each: (row, col) -> high temporal-variance (E2597 NOISY) pixel
     n_frames=8,
     dark_level=100.0,
     flat_level=5000.0,
     sigma=3.0,
+    noisy_sigma=200.0,
     seed=0,
 ) -> DefectStacks:
-    """Build dark/flat stacks; planted pixels are dead (flat == dark => gain 0)."""
+    """Build dark/flat stacks; dead pixels are flat == dark (zero gain), noisy
+    pixels carry a large per-frame temporal spike (E2597 NOISY, review finding
+    6). All planted positions are single-point morphology for interpolation."""
     rng = np.random.default_rng(seed)
     ny, nx = shape
     planted = np.zeros(shape, dtype=bool)
+    dead = np.zeros(shape, dtype=bool)
     morph = np.full(shape, DefectMorphology.NORMAL, dtype=np.int8)
 
     for (r, c) in singles:
-        planted[r, c] = True
+        planted[r, c] = dead[r, c] = True
         morph[r, c] = DefectMorphology.SINGLE
     for (r, c0, length) in lines:
         planted[r, c0 : c0 + length] = True
+        dead[r, c0 : c0 + length] = True
         morph[r, c0 : c0 + length] = DefectMorphology.LINE
     for (r0, c0, h, w) in clusters:
         planted[r0 : r0 + h, c0 : c0 + w] = True
+        dead[r0 : r0 + h, c0 : c0 + w] = True
         morph[r0 : r0 + h, c0 : c0 + w] = DefectMorphology.CLUSTER
+    for (r, c) in noisy:
+        planted[r, c] = True
+        morph[r, c] = DefectMorphology.SINGLE  # corrected as an isolated bad pixel
 
     dark_frames = []
     flat_frames = []
@@ -131,7 +142,10 @@ def make_defect_stacks(
         dark = dark_level + rng.normal(0.0, sigma, size=shape)
         flat = flat_level + rng.normal(0.0, sigma, size=shape)
         # Dead pixels: flat collapses to the dark level (zero gain).
-        flat[planted] = dark[planted]
+        flat[dead] = dark[dead]
+        # Noisy pixels: large per-frame temporal variance in the flat stack.
+        for (r, c) in noisy:
+            flat[r, c] = flat_level + rng.normal(0.0, noisy_sigma)
         dark_frames.append(new_frame(dark.astype(np.float32)))
         flat_frames.append(new_frame(flat.astype(np.float32)))
     return DefectStacks(dark_frames, flat_frames, planted, morph)
