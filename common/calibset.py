@@ -17,6 +17,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 import numpy as np
@@ -46,6 +47,12 @@ class CalibSchemaError(ValueError):
     """Raised when a CalibSet violates the common schema."""
 
 
+def _sidecar_paths(path: str | Path) -> tuple[Path, Path]:
+    """Resolve `<path>.npz` / `<path>.json` by appending to the full name."""
+    base = Path(path)
+    return base.parent / (base.name + ".npz"), base.parent / (base.name + ".json")
+
+
 @dataclass(frozen=True)
 class CalibSet:
     """Calibration data following the single common schema (DATA-3).
@@ -66,6 +73,19 @@ class CalibSet:
     kind: CalibKind
     data: Mapping[str, np.ndarray] = field(default_factory=dict)
     provenance: CalibProvenance | None = None
+
+    def __post_init__(self) -> None:
+        # Immutability: modules must not mutate calibration payloads in place
+        # (same contract as XFrame buffers, DATA-6). Writable caller arrays are
+        # copied before locking; the mapping itself is frozen.
+        frozen: dict[str, np.ndarray] = {}
+        for name, arr in dict(self.data).items():
+            if isinstance(arr, np.ndarray):
+                if arr.flags.writeable:
+                    arr = arr.copy()
+                    arr.flags.writeable = False
+            frozen[name] = arr
+        object.__setattr__(self, "data", MappingProxyType(frozen))
 
     @property
     def calibset_id(self) -> str:
@@ -107,9 +127,10 @@ class CalibSet:
         @MX:NOTE: [AUTO] [P]-grade format; isolated here so T2 can revisit
         without changing callers.
         """
-        base = Path(path)
-        npz_path = base.with_suffix(".npz")
-        json_path = base.with_suffix(".json")
+        # NOTE: suffixes are APPENDED to the full basename. Path.with_suffix
+        # would truncate dotted names ("gain_v1.0" -> "gain_v1.npz"), letting
+        # different calibration versions collide on the same files.
+        npz_path, json_path = _sidecar_paths(path)
         np.savez(npz_path, **{k: np.asarray(v) for k, v in self.data.items()})
         meta: dict[str, Any] = {
             "panel_id": self.panel_id,
@@ -134,9 +155,7 @@ class CalibSet:
     @classmethod
     def load(cls, path: str | Path) -> "CalibSet":
         """Load from the `<path>.npz` + `<path>.json` sidecar pair."""
-        base = Path(path)
-        npz_path = base.with_suffix(".npz")
-        json_path = base.with_suffix(".json")
+        npz_path, json_path = _sidecar_paths(path)
         meta = json.loads(json_path.read_text(encoding="utf-8"))
         with np.load(npz_path) as npz:
             data = {k: npz[k] for k in meta.get("data_keys", [])}

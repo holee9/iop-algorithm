@@ -35,6 +35,28 @@ PIXEL_DTYPE_VALIDATION = np.float64
 MASK_DTYPE = np.uint8
 
 
+def _locked(arr: np.ndarray, dtype: np.dtype | type) -> np.ndarray:
+    """Return a read-only ndarray of `dtype` backed by safe (unaliased) memory.
+
+    @MX:NOTE: [AUTO] Buffers that are already read-only and of the right dtype
+    are shared as-is — metadata-only dataclasses.replace() (record_history,
+    with_intermediate) must not copy ~120MB of frame data per call. Writable
+    input is copied before locking so the caller's array is never mutated.
+    """
+    out = np.asarray(arr, dtype=dtype)
+    if out is arr:
+        if out.flags.writeable:
+            out = out.copy()
+            out.flags.writeable = False
+        return out
+    # np.asarray produced a new array (dtype cast) or a view; a view shares
+    # memory with a possibly-writable base, so copy in that case.
+    if out.base is not None:
+        out = out.copy()
+    out.flags.writeable = False
+    return out
+
+
 class MaskFlag(IntFlag):
     """Bit-flags composing the XFrame mask stack (REQ-INFRA-DATA-1)."""
 
@@ -67,13 +89,31 @@ class HistoryEntry:
     calibset_id: str | None
 
 
+def _canonical_param(value: Any) -> Any:
+    """Canonicalize a parameter value for hashing.
+
+    @MX:NOTE: [AUTO] numpy arrays are hashed over dtype+shape+raw bytes, never
+    str() (whose truncation for >1000 elements would make the hash
+    non-injective and corrupt the IEC 62304 audit chain).
+    """
+    if isinstance(value, np.ndarray):
+        digest = hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest()
+        return {"__ndarray__": [str(value.dtype), list(value.shape), digest]}
+    if isinstance(value, np.generic):
+        return value.item()
+    return str(value)
+
+
 def hash_params(params: Mapping[str, Any]) -> str:
     """Deterministic hash of a parameter mapping (DATA-4).
 
     Uses canonical JSON (sorted keys) so the same parameters always yield the
-    same hash regardless of insertion order.
+    same hash regardless of insertion order; ndarray values are hashed over
+    their raw bytes via _canonical_param.
     """
-    canonical = json.dumps(params, sort_keys=True, default=str, separators=(",", ":"))
+    canonical = json.dumps(
+        dict(params), sort_keys=True, default=_canonical_param, separators=(",", ":")
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -105,24 +145,19 @@ class XFrame:
         # Normalize dtypes and lock buffers read-only for the immutability
         # contract. object.__setattr__ is required because the dataclass is
         # frozen.
-        pixel = np.asarray(self.pixel, dtype=PIXEL_DTYPE)
-        masks = np.asarray(self.masks, dtype=MASK_DTYPE)
+        pixel = _locked(self.pixel, PIXEL_DTYPE)
+        masks = _locked(self.masks, MASK_DTYPE)
         if pixel.shape != masks.shape:
             raise ValueError(
                 f"pixel shape {pixel.shape} != masks shape {masks.shape}"
             )
-        pixel = pixel.copy()
-        masks = masks.copy()
-        pixel.flags.writeable = False
-        masks.flags.writeable = False
         object.__setattr__(self, "pixel", pixel)
         object.__setattr__(self, "masks", masks)
 
         if self.pixel_f64 is not None:
-            f64 = np.asarray(self.pixel_f64, dtype=PIXEL_DTYPE_VALIDATION).copy()
+            f64 = _locked(self.pixel_f64, PIXEL_DTYPE_VALIDATION)
             if f64.shape != pixel.shape:
                 raise ValueError("pixel_f64 shape must match pixel shape")
-            f64.flags.writeable = False
             object.__setattr__(self, "pixel_f64", f64)
 
     # -- pure constructors -------------------------------------------------
@@ -134,12 +169,18 @@ class XFrame:
     def with_pixel(
         self, pixel: np.ndarray, pixel_f64: np.ndarray | None = None
     ) -> "XFrame":
-        """Return a new XFrame with replaced pixel data, preserving metadata."""
-        return replace(
-            self,
-            pixel=pixel,
-            pixel_f64=pixel_f64 if pixel_f64 is not None else self.pixel_f64,
-        )
+        """Return a new XFrame with replaced pixel data, preserving metadata.
+
+        When this frame carries a validation-mode float64 buffer, a new
+        `pixel_f64` MUST be supplied alongside the new pixels — silently
+        keeping the old buffer would desynchronize the CI-3b parallel path.
+        """
+        if self.pixel_f64 is not None and pixel_f64 is None:
+            raise ValueError(
+                "frame carries a validation-mode pixel_f64 buffer; with_pixel "
+                "requires an explicit updated pixel_f64 (stale buffer refused)"
+            )
+        return replace(self, pixel=pixel, pixel_f64=pixel_f64)
 
     def record_history(self, entry: HistoryEntry) -> "XFrame":
         """Return a new XFrame with `entry` appended to the history chain.
@@ -161,12 +202,14 @@ class XFrame:
     def equals(self, other: "XFrame") -> bool:
         """Full structural comparison used by the harness (CONTRACT-4).
 
-        Compares pixel, mask stack, noise model, and history chain. Validation
-        float64 buffers are compared when present on either side.
+        Compares pixel, mask stack, noise model, history chain,
+        validation_mode flag, float64 parallel buffer, and preserved
+        intermediates. NaN pixels compare equal (equal_nan) — dead pixels in
+        float golden-model fixtures are commonly NaN-marked.
         """
         if not isinstance(other, XFrame):
             return False
-        if not np.array_equal(self.pixel, other.pixel):
+        if not np.array_equal(self.pixel, other.pixel, equal_nan=True):
             return False
         if not np.array_equal(self.masks, other.masks):
             return False
@@ -174,13 +217,19 @@ class XFrame:
             return False
         if self.history != other.history:
             return False
+        if self.validation_mode != other.validation_mode:
+            return False
         if (self.pixel_f64 is None) != (other.pixel_f64 is None):
             return False
         if self.pixel_f64 is not None and not np.array_equal(
-            self.pixel_f64, other.pixel_f64
+            self.pixel_f64, other.pixel_f64, equal_nan=True
         ):
             return False
-        return True
+        if len(self.intermediates) != len(other.intermediates):
+            return False
+        return all(
+            a.equals(b) for a, b in zip(self.intermediates, other.intermediates)
+        )
 
 
 def new_frame(

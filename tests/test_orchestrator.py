@@ -21,12 +21,18 @@ FRAME_SHAPE = (4, 4)
 
 
 def _calib_for(stage: str) -> CalibSet:
+    # The gate requires kind to match the stage it is wired to; stages with no
+    # dedicated CalibKind (saturation/geometry/post) use OTHER.
+    try:
+        kind = CalibKind(stage)
+    except ValueError:
+        kind = CalibKind.OTHER
     return CalibSet(
         panel_id="PANEL-A",
         resolution=FRAME_SHAPE,
         valid_from="2026-01-01",
         valid_until="2027-01-01",
-        kind=CalibKind.OTHER,
+        kind=kind,
         data={},
     )
 

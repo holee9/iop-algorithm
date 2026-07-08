@@ -41,7 +41,8 @@ def diff_frames(a: XFrame, b: XFrame) -> EquivalenceDiff:
     """Compute a structural diff between two candidate output frames (CI-4)."""
     if a.shape != b.shape:
         raise ValueError(f"frame shapes differ: {a.shape} vs {b.shape}")
-    pixel_equal = bool(np.array_equal(a.pixel, b.pixel))
+    # equal_nan: NaN-marked dead pixels must not spuriously differ.
+    pixel_equal = bool(np.array_equal(a.pixel, b.pixel, equal_nan=True))
     masks_equal = bool(np.array_equal(a.masks, b.masks))
     noise_equal = a.noise == b.noise
     max_abs = float(np.max(np.abs(a.pixel.astype(np.float64) - b.pixel.astype(np.float64))))

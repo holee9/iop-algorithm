@@ -81,14 +81,34 @@ class PipelineDefinition:
         return cls(stages=CANONICAL_ORDER)
 
 
+# Stage names that directly correspond to a CalibKind category; for these the
+# CalibSet.kind must match the stage it is wired to.
+_KIND_BY_STAGE: dict[str, str] = {
+    "offset": "offset",
+    "gain": "gain",
+    "defect": "defect",
+    "lag": "lag",
+    "line_noise": "line_noise",
+}
+
+
 def _calibration_gate(
-    frame: XFrame, calib_map: Mapping[str, CalibSet], stages: tuple[str, ...]
+    frame: XFrame,
+    calib_map: Mapping[str, CalibSet],
+    stages: tuple[str, ...],
+    panel_id: str | None = None,
+    timestamp: str | None = None,
 ) -> None:
     """Refuse processing on missing/mismatched calibration (ORCH-4, EC-1/EC-2).
+
+    Checks per stage: presence, schema, resolution, kind-vs-stage wiring, and
+    (when given) expected panel_id and ISO-8601 validity window at `timestamp`.
+    All wired CalibSets must additionally agree on panel_id with each other.
 
     @MX:NOTE: [AUTO] No default substitution — an unmet requirement raises
     CalibrationError naming the offending stage/field (SWR-000-5).
     """
+    seen_panel: tuple[str, str] | None = None  # (stage, panel_id)
     for stage in stages:
         calib = calib_map.get(stage)
         if calib is None:
@@ -101,6 +121,31 @@ def _calibration_gate(
                 f"stage '{stage}': CalibSet resolution {calib.resolution} "
                 f"!= frame {frame.shape}"
             )
+        expected_kind = _KIND_BY_STAGE.get(stage)
+        if expected_kind is not None and calib.kind.value != expected_kind:
+            raise CalibrationError(
+                f"stage '{stage}': CalibSet kind '{calib.kind.value}' does not "
+                f"match the stage (expected '{expected_kind}')"
+            )
+        if panel_id is not None and calib.panel_id != panel_id:
+            raise CalibrationError(
+                f"stage '{stage}': CalibSet panel_id '{calib.panel_id}' "
+                f"!= expected panel_id '{panel_id}'"
+            )
+        if seen_panel is not None and calib.panel_id != seen_panel[1]:
+            raise CalibrationError(
+                f"stage '{stage}': CalibSet panel_id '{calib.panel_id}' "
+                f"!= panel_id '{seen_panel[1]}' of stage '{seen_panel[0]}'"
+            )
+        seen_panel = (stage, calib.panel_id)
+        if timestamp is not None and not (
+            calib.valid_from <= timestamp <= calib.valid_until
+        ):
+            # ISO-8601 strings order lexicographically == chronologically.
+            raise CalibrationError(
+                f"stage '{stage}': timestamp {timestamp} outside validity "
+                f"window [{calib.valid_from}, {calib.valid_until}]"
+            )
 
 
 def run_pipeline(
@@ -109,6 +154,9 @@ def run_pipeline(
     registry: Mapping[str, ProcessCallable],
     calib_map: Mapping[str, CalibSet],
     params_map: Mapping[str, Params] | None = None,
+    *,
+    panel_id: str | None = None,
+    timestamp: str | None = None,
 ) -> XFrame:
     """Execute the pipeline in fixed canonical order (ORCH-1/3/4).
 
@@ -128,7 +176,9 @@ def run_pipeline(
     params_map = params_map or {}
 
     # Entry gate before any processing (ORCH-4).
-    _calibration_gate(frame, calib_map, definition.stages)
+    _calibration_gate(
+        frame, calib_map, definition.stages, panel_id=panel_id, timestamp=timestamp
+    )
 
     current = frame
     preserved: tuple[XFrame, ...] = ()

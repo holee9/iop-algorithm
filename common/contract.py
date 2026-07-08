@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from types import MappingProxyType
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from common.calibset import CalibSet
 from common.xframe import XFrame, hash_params
@@ -39,6 +40,11 @@ class Params:
     """
 
     values: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Snapshot + freeze: never alias the caller's mutable dict, so the
+        # hash recorded in the history chain always matches what modules read.
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.values.get(key, default)
@@ -114,7 +120,7 @@ def check_process_contract(module: Any) -> tuple[str, ...]:
         if p.kind
         in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
-    if len(param_names) != len(PROCESS_PARAM_NAMES):
+    if tuple(param_names) != PROCESS_PARAM_NAMES:
         violations.append(
             f"{_name(module)}: process must take exactly "
             f"{PROCESS_PARAM_NAMES}, got {tuple(param_names)}"
@@ -158,10 +164,11 @@ def run_harness(
 
 
 def _diff_summary(result: XFrame, expected: XFrame) -> str:
+    # Field coverage must mirror XFrame.equals so a FAIL always names a field.
     parts: list[str] = []
     import numpy as np
 
-    if not np.array_equal(result.pixel, expected.pixel):
+    if not np.array_equal(result.pixel, expected.pixel, equal_nan=True):
         parts.append("pixel")
     if not np.array_equal(result.masks, expected.masks):
         parts.append("masks")
@@ -169,6 +176,17 @@ def _diff_summary(result: XFrame, expected: XFrame) -> str:
         parts.append("noise")
     if result.history != expected.history:
         parts.append("history")
+    if result.validation_mode != expected.validation_mode:
+        parts.append("validation_mode")
+    if (result.pixel_f64 is None) != (expected.pixel_f64 is None) or (
+        result.pixel_f64 is not None
+        and not np.array_equal(result.pixel_f64, expected.pixel_f64, equal_nan=True)
+    ):
+        parts.append("pixel_f64")
+    if len(result.intermediates) != len(expected.intermediates) or not all(
+        a.equals(b) for a, b in zip(result.intermediates, expected.intermediates)
+    ):
+        parts.append("intermediates")
     return ",".join(parts) or "unknown"
 
 
