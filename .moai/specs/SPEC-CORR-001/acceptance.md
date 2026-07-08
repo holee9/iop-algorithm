@@ -4,10 +4,10 @@ DoD: **합성 주입 왜곡 제거를 T1 지표 엔진으로 before/after 판정
 
 ## Given-When-Then 시나리오
 
-### Scenario 1 — Offset 다크프레임 감산 (REQ-CORR-OFFSET-1)
-- **Given** 유효한 입력 XFrame(불변)과 CalibSet(OFFSET)의 offset map O(x,y)가 주어져 있다.
+### Scenario 1 — Offset 다크프레임 감산 + raw 포화 검출 (REQ-CORR-OFFSET-1, -4)
+- **Given** 유효한 입력 XFrame(불변)과 CalibSet(OFFSET)의 offset map O(x,y), 그리고 offset 단계 Params `raw_saturation_threshold`(S_th, [B])와 I_raw ≥ S_th인 일부 포화 화소가 주어져 있다.
 - **When** `offset.process(frame, calib, params)`가 실행된다.
-- **Then** 출력 pixel은 I₁ = I_raw − O이고, 입력 XFrame(pixel · mask · noise · history)은 변경되지 않으며, 이력 체인에 모듈 버전 · 파라미터 해시 · 소비 CalibSet ID가 추가되어 있다.
+- **Then** 감산 전 I_raw ≥ S_th 화소가 XFrame 마스크의 SATURATION 플래그로 표시되고(raw 포화 검출은 I_raw를 받는 유일 단계 offset 소관 — SPEC-LNSG-001 결정 2), 출력 pixel은 I₁ = I_raw − O이며, 입력 XFrame(pixel · mask · noise · history)은 변경되지 않고, 이력 체인에 모듈 버전 · 파라미터 해시 · 소비 CalibSet ID가 추가되어 있다.
 
 ### Scenario 2 — Offset 음수 클램프 + 리포트 (REQ-CORR-OFFSET-2)
 - **Given** 일부 화소에서 I_raw − O < 0을 유발하는 과대 offset 입력이 주어져 있다.
@@ -98,7 +98,7 @@ DoD: **합성 주입 왜곡 제거를 T1 지표 엔진으로 before/after 판정
 
 - [ ] `modules/` 패키지 배치(offset · gain · defect), `module → common` 단방향 import-linter 계약 통과(모듈 간 · `metrics` · `pipeline` import 0건)
 - [ ] 세 모듈 `process(XFrame, CalibSet, Params) -> XFrame` 시그니처·반환형·입력 불변·이력 체인(모듈 버전·파라미터 해시·CalibSet ID) — `run_harness` XDET-TC-000 통과(Scenario 11)
-- [ ] offset: O 감산(Scenario 1) + 음수 클램프·리포트(이력 체인 메타 스칼라, Scenario 2) + 잔여 offset < σ_d 중앙값 10%[T](Scenario 10)
+- [ ] offset: O 감산(Scenario 1) + raw ≥ S_th SATURATION 검출(REQ-CORR-OFFSET-4, Scenario 1; T3/SPEC-LNSG-001 run 단계 구현 예정) + 음수 클램프·리포트(이력 체인 메타 스칼라, Scenario 2) + 잔여 offset < σ_d 중앙값 10%[T](Scenario 10)
 - [ ] gain: G 정규화(Scenario 3) + 상한 클램프·리포트(이력 체인 메타 스칼라, Scenario 4) + 범위밖 DEFECT 이관(출력값 I₁ 보존, Scenario 5)
 - [ ] defect: 맵 기반 SWR-303 보간(단일점/line/cluster) + INTERPOLATION 플래그·하류 전달·gain 플래그 화소 단일점 보간(Scenario 6) + cluster > C_max 맵 거부·패널 경고·스키마 위반 맵 거부(EC-2) + 정상 이웃 부족 무단 복원 금지(DEFECT 유지·INTERPOLATION 미설정·화소값 보존, EC-3)
 - [ ] defect-map 빌더 `metrics/defect_map.py`: `classify_defects` 재사용 → CalibSet(DEFECT) 생성(DEFECT-6) + `metrics → common` 단방향(모듈은 빌더·metrics import 0건, Scenario 9)
