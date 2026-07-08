@@ -22,7 +22,8 @@ import pytest
 #
 # TC-001/002/003 (VV-001) gate the T2/WP1 offset/gain/defect CORRECTION modules
 #   ("보정 전/후 DQE·MTF 유지율", "Defect 보정 잔존 cluster") against EV-101/102/
-#   103 min — not the metrics engine. Deferred to T2.
+#   103 min. These are now LIVE in tests/modules/test_tc_correction.py (T2/WP1
+#   landed) and therefore removed from the deferred skeleton list below.
 # TC-004/005 (VV-002) gate the T4/WP2 lag CORRECTION processing (first-frame lag
 #   %, ghost CNR reduced below EV-104 min). The metrics-engine lag/ghost readout
 #   is exercised in tests/metrics/test_lag.py. Deferred to T4.
@@ -30,9 +31,6 @@ import pytest
 #   read accuracy on GDS-NDT weld specimens against EV-301 min. It is not purely
 #   the metric readout (which lives in tests/metrics/test_ndt.py). Deferred to T9.
 _SKELETONS = [
-    ("XDET-TC-001", "offset/gain/defect correction: before/after DQE 3-dose (T2/WP1)"),
-    ("XDET-TC-002", "offset/gain/defect correction: before/after MTF@Nyquist (T2/WP1)"),
-    ("XDET-TC-003", "defect correction: residual cluster / miss-rate gate (T2/WP1)"),
     ("XDET-TC-004", "lag correction: first-frame lag % vs EV-104 (T4/WP2)"),
     ("XDET-TC-005", "lag correction: ghost residual CNR vs EV-104 (T4/WP2)"),
     ("XDET-TC-006", "line noise / reference-absent path (T3/WP3)"),
