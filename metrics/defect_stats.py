@@ -22,7 +22,7 @@ import numpy as np
 from common import robust_stats
 from common.contract import Params
 from common.xframe import XFrame
-from metrics.result import MetricCondition, MetricReadError, MetricResult
+from metrics.result import MetricCondition, MetricReadError, MetricResult, require_param
 
 # @MX:NOTE: [AUTO] 6x-median noisy threshold is fixed by ASTM E2597-22 [S];
 # it is intentionally NOT a Param (standard constant, not tunable).
@@ -75,7 +75,7 @@ def classify_defects(
         MetricReadError: stack count below the minimum, or no valid (responsive)
             pixels remain (e.g. an all-dead ROI) (REQ-METRICS-DEFECT-5 / EC-4).
     """
-    min_frames = int(params.get(P_MIN_FRAMES))
+    min_frames = require_param(params, P_MIN_FRAMES, int)
     if len(dark_frames) < min_frames or len(flat_frames) < min_frames:
         raise MetricReadError(
             f"defect stats: stack count below minimum ({min_frames}); "
@@ -95,12 +95,12 @@ def classify_defects(
     median_flat_std = float(np.median(flat_std))
     median_dark_std = float(np.median(dark_std))
 
-    over_value = float(params.get(P_OVER_VALUE))
-    under_value = float(params.get(P_UNDER_VALUE))
-    dead_frac = float(params.get(P_DEAD_GAIN_FRAC))
-    nonuniform_frac = float(params.get(P_NONUNIFORM_FRAC))
-    lag_frac = float(params.get(P_LAG_FRAC))
-    unstable_frac = float(params.get(P_UNSTABLE_FRAC))
+    over_value = require_param(params, P_OVER_VALUE, float)
+    under_value = require_param(params, P_UNDER_VALUE, float)
+    dead_frac = require_param(params, P_DEAD_GAIN_FRAC, float)
+    nonuniform_frac = require_param(params, P_NONUNIFORM_FRAC, float)
+    lag_frac = require_param(params, P_LAG_FRAC, float)
+    unstable_frac = require_param(params, P_UNSTABLE_FRAC, float)
 
     over = flat_mean >= over_value
     under = flat_mean <= under_value

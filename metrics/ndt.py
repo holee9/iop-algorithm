@@ -23,7 +23,7 @@ import numpy as np
 from common import robust_stats
 from common.contract import Params
 from common.xframe import XFrame
-from metrics.result import MetricCondition, MetricReadError, MetricResult
+from metrics.result import MetricCondition, MetricReadError, MetricResult, require_param
 
 P_DIP_THRESHOLD = "ndt_dip_threshold"  # ISO 20% dip criterion (fraction) [P]
 P_SRB_NORM_UM = "ndt_srb_norm_um"  # 88.6 um normalization constant [S]
@@ -77,7 +77,7 @@ def read_duplex_srb(
         MetricReadError: no resolvable dip found (REQ-METRICS-NDT-4 / EC-5).
     """
     prof = np.asarray(profile, dtype=np.float64)
-    threshold = float(params.get(P_DIP_THRESHOLD))
+    threshold = require_param(params, P_DIP_THRESHOLD, float)
     if not pairs:
         raise MetricReadError("duplex SRb: no wire pairs provided")
 
@@ -146,7 +146,7 @@ def compute_snrn(
         calibset_id: consumed CalibSet id (metadata).
     """
     snr, mean, std = compute_snr(frame, roi, params)
-    norm_um = float(params.get(P_SRB_NORM_UM))
+    norm_um = require_param(params, P_SRB_NORM_UM, float)
     snrn = snr * norm_um / srb_um
     return MetricResult(
         name="SNRn",

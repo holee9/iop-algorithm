@@ -15,7 +15,7 @@ deliberately absent from this structure.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, TypeVar
 
 
 @dataclass(frozen=True)
@@ -65,3 +65,28 @@ class MetricReadError(ValueError):
     (REQ-METRICS-NDT-4), and insufficient defect-stack input
     (REQ-METRICS-DEFECT-5). The engine never substitutes a default estimate.
     """
+
+
+_T = TypeVar("_T")
+
+
+def require_param(params: Any, key: str, cast: Callable[[Any], _T] = lambda x: x) -> _T:
+    """Fetch a REQUIRED Params key, failing explicitly when it is absent.
+
+    @MX:ANCHOR: [AUTO] single required-parameter accessor for every metric.
+    @MX:REASON: fan_in spans mtf/nps/dqe/defect/ndt; a missing required key must
+    raise MetricReadError (naming the key) rather than crash with an opaque
+    TypeError from ``int(params.get(key))`` on a ``None`` (REQ-METRICS-CORE-4).
+
+    Args:
+        params: the Params container (anything exposing ``.get(key)``).
+        key: the required parameter name.
+        cast: value converter (e.g. ``float`` / ``int``); defaults to identity.
+
+    Raises:
+        MetricReadError: the key is missing (``None``), naming the key.
+    """
+    value = params.get(key)
+    if value is None:
+        raise MetricReadError(f"missing required parameter '{key}'")
+    return cast(value)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from metrics import dqe, mtf, nps
+from metrics import dqe, nps
 from metrics.result import MetricReadError
 from tests.metrics.phantoms import generators as gen
 from tests.metrics.phantoms.params import TOLERANCES, make_params
@@ -50,25 +50,69 @@ def test_colored_noise_is_lowpass_shaped():
     assert low > high
 
 
-def test_scenario3_dqe_reproduces_formula():
-    """DQE = MTF^2 q Ka / NPS reproduces the analytic composition."""
-    params = make_params()
-    edge = gen.make_slanted_edge()
-    mtf_res = mtf.compute_mtf(edge.frame, params)
-    noise = gen.make_white_noise_frames()
-    nps_res = nps.compute_nps(noise.frames, params)
+def _ideal_quantum_frames(fluence_per_mm2, pitch_mm, shape, n_frames, seed):
+    """Poisson-limited ideal detector: each pixel counts N = fluence * area.
 
-    freqs = nps_res.get("frequencies_lpmm")
-    mtf_on_grid = np.interp(freqs, mtf_res.get("frequencies_lpmm"), mtf_res.get("mtf"))
-    nps_vals = nps_res.get("nps")
+    For an ideal quantum-limited detector the output SNR equals the input SNR,
+    so DQE = 1 at every frequency by construction.
+    """
+    from common.xframe import new_frame
 
-    result = dqe.compute_dqe(freqs, mtf_on_grid, nps_vals, params)
+    rng = np.random.default_rng(seed)
+    n_mean = fluence_per_mm2 * (pitch_mm * pitch_mm)  # photons per pixel
+    frames = [
+        new_frame(rng.poisson(n_mean, size=shape).astype(np.float32))
+        for _ in range(n_frames)
+    ]
+    return frames
+
+
+def _ideal_dqe_midband(params, pitch_mm, shape=(512, 512), n_frames=24, seed=0):
+    """Compute the mid-band DQE of an ideal quantum-limited synthetic detector.
+
+    Non-circular: the expected value (~1) is the analytic DQE of an ideal
+    Poisson detector, NOT a recomputation of the implementation expression. The
+    engine ingests NNPS and q*Ka independently and must return ~1.
+    """
     q = params.get("dqe_q")
     ka = params.get("dqe_ka")
-    expected = mtf_on_grid**2 * q * ka / nps_vals
+    fluence = q * ka  # photons / mm^2
+    frames = _ideal_quantum_frames(fluence, pitch_mm, shape, n_frames, seed)
+    nps_res = nps.compute_nps(frames, params)
+    freqs = nps_res.get("frequencies_lpmm")
+    nnps = nps_res.get("nnps")
+    mtf_ideal = np.ones_like(freqs)  # ideal detector: MTF = 1
+    result = dqe.compute_dqe(freqs, mtf_ideal, nnps, params)
     got = result.get("dqe")
-    good = ~np.isnan(got)
-    assert np.allclose(got[good], expected[good], rtol=TOLERANCES["dqe_rel"])
+    nyq = 1.0 / (2.0 * pitch_mm)
+    band = (freqs > 0.2 * nyq) & (freqs < 0.8 * nyq)
+    return float(np.mean(got[band]))
+
+
+def test_scenario3_dqe_ideal_detector_is_unity():
+    """Ideal quantum-limited detector -> DQE ~ 1 and dimensionless (IEC form).
+
+    Catches the dimensionally-inverted protocol §1.4 expression: with the wrong
+    (MTF^2 q Ka / NPS) form the value is enormous, not ~1.
+    """
+    params = make_params()
+    pitch = params.get("pixel_pitch_mm")
+    dqe_mid = _ideal_dqe_midband(params, pitch, seed=0)
+    assert abs(dqe_mid - 1.0) < TOLERANCES["dqe_ideal_abs"], dqe_mid
+
+
+def test_scenario3_dqe_is_dose_invariant():
+    """DQE at 2x dose ~= DQE at nominal dose (dose invariance of the IEC form).
+
+    The inverted protocol expression is NOT dose invariant; this pins the fix.
+    """
+    pitch = make_params().get("pixel_pitch_mm")
+    dqe_1x = _ideal_dqe_midband(make_params(), pitch, seed=1)
+    # 2x dose: double the air kerma (fluence) and the delivered photon counts.
+    params_2x = make_params(dqe_ka=make_params().get("dqe_ka") * 2.0)
+    dqe_2x = _ideal_dqe_midband(params_2x, pitch, seed=2)
+    assert abs(dqe_1x - dqe_2x) < TOLERANCES["dqe_ideal_abs"], (dqe_1x, dqe_2x)
+    assert abs(dqe_2x - 1.0) < TOLERANCES["dqe_ideal_abs"], dqe_2x
 
 
 def test_scenario4_three_dose_levels():

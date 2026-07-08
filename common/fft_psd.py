@@ -109,7 +109,12 @@ def axial_1d_nps(
     fy = np.fft.fftshift(np.fft.fftfreq(ny, d=pitch_mm))
     # Combine the two orthogonal 1D estimates onto the positive half-axis by
     # interpolating the vertical estimate onto the horizontal frequency grid.
-    pos = fx >= 0
+    # For a non-square NPS (nx != ny) the two axes have different Nyquist limits;
+    # np.interp would CLAMP the vertical estimate beyond fy.max(), biasing the
+    # top band. Restrict the combined average to the common frequency range
+    # min(fx.max(), fy.max()) so no bin is fabricated by clamping.
+    fmax_common = min(float(fx.max()), float(fy.max()))
+    pos = (fx >= 0) & (fx <= fmax_common)
     freq = fx[pos]
     horiz_pos = horiz[pos]
     vert_interp = np.interp(freq, fy, vert)

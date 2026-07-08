@@ -23,13 +23,15 @@ import numpy as np
 from common import fft_psd
 from common.contract import Params
 from common.xframe import XFrame
-from metrics.result import MetricCondition, MetricReadError, MetricResult
+from metrics.result import MetricCondition, MetricReadError, MetricResult, require_param
 
 P_PITCH = "pixel_pitch_mm"
 P_ROI_SIZE = "nps_roi_size"  # ROI side (px), IEC default 256 [P]
 P_DETREND_ORDER = "nps_detrend_order"  # 2D polynomial detrend order [P]
 P_EXCLUDE_AXIS = "nps_exclude_axis_bins"  # central bins excluded per side [P]
 P_AVG_LINES = "nps_average_lines"  # off-axis lines averaged per side [P]
+P_CENTRAL_FRAC = "nps_central_frac"  # central-region fraction tiled for ROIs [P]
+P_LINE_SIG = "line_noise_sig_factor"  # peak significance: n x MAD above median [P]
 
 
 def _detrend(roi: np.ndarray, order: int) -> np.ndarray:
@@ -48,19 +50,33 @@ def _detrend(roi: np.ndarray, order: int) -> np.ndarray:
     return roi - fit
 
 
-def _central_rois(image: np.ndarray, roi_size: int) -> list[tuple[tuple[int, int, int, int], np.ndarray]]:
-    """Half-overlap tiling of the central region into square ROIs."""
+def _central_rois(
+    image: np.ndarray, roi_size: int, central_frac: float
+) -> list[tuple[tuple[int, int, int, int], np.ndarray]]:
+    """Half-overlap tiling of the CENTRAL region into square ROIs.
+
+    IEC 62220-1 / measurement protocol §1.3 require the ROIs to come from the
+    central region of the field; border ROIs (heel effect, field non-uniformity,
+    edge roll-off) are excluded. Only the central `central_frac` of each axis is
+    tiled, and ROI extents are reported in full-frame coordinates.
+    """
     ny, nx = image.shape
-    if roi_size > ny or roi_size > nx:
+    ch = int(round(ny * central_frac))
+    cw = int(round(nx * central_frac))
+    top0 = (ny - ch) // 2
+    left0 = (nx - cw) // 2
+    if roi_size > ch or roi_size > cw:
         raise MetricReadError(
-            f"NPS: 256x256 ROI ({roi_size}) exceeds frame {ny}x{nx} "
-            "(ROI leaves the frame boundary)"
+            f"NPS: 256x256 ROI ({roi_size}) exceeds the central region "
+            f"{ch}x{cw} of frame {ny}x{nx} (ROI leaves the central field)"
         )
     stride = roi_size // 2  # half-overlap
     rois: list[tuple[tuple[int, int, int, int], np.ndarray]] = []
-    for top in range(0, ny - roi_size + 1, stride):
-        for left in range(0, nx - roi_size + 1, stride):
-            rois.append(((top, left, roi_size, roi_size), image[top : top + roi_size, left : left + roi_size]))
+    for top in range(top0, top0 + ch - roi_size + 1, stride):
+        for left in range(left0, left0 + cw - roi_size + 1, stride):
+            rois.append(
+                ((top, left, roi_size, roi_size), image[top : top + roi_size, left : left + roi_size])
+            )
     return rois
 
 
@@ -84,18 +100,19 @@ def compute_nps(
     """
     if not frames:
         raise MetricReadError("NPS: no input frames")
-    pitch = float(params.get(P_PITCH))
-    roi_size = int(params.get(P_ROI_SIZE))
-    order = int(params.get(P_DETREND_ORDER))
-    exclude = int(params.get(P_EXCLUDE_AXIS))
-    avg_lines = int(params.get(P_AVG_LINES))
+    pitch = require_param(params, P_PITCH, float)
+    roi_size = require_param(params, P_ROI_SIZE, int)
+    order = require_param(params, P_DETREND_ORDER, int)
+    exclude = require_param(params, P_EXCLUDE_AXIS, int)
+    avg_lines = require_param(params, P_AVG_LINES, int)
+    central_frac = require_param(params, P_CENTRAL_FRAC, float)
     pixel_area = pitch * pitch
 
     detrended: list[np.ndarray] = []
     roi_means: list[float] = []
     for frame in frames:
         image = np.asarray(frame.pixel, dtype=np.float64)
-        for _extent, roi in _central_rois(image, roi_size):
+        for _extent, roi in _central_rois(image, roi_size, central_frac):
             roi_means.append(float(roi.mean()))
             detrended.append(_detrend(roi, order))
     if not detrended:
@@ -147,7 +164,8 @@ def detect_line_noise(
     """
     if not frames:
         raise MetricReadError("line-noise: no input frames")
-    pitch = float(params.get(P_PITCH))
+    pitch = require_param(params, P_PITCH, float)
+    sig_factor = require_param(params, P_LINE_SIG, float)
 
     col_spectra = []
     row_spectra = []
@@ -164,9 +182,23 @@ def detect_line_noise(
     row_freq = np.fft.rfftfreq(ny, d=pitch)
 
     def _peak(ps: np.ndarray, freq: np.ndarray) -> dict:
-        # Skip DC; the anomalous peak is the maximum of the remaining spectrum.
-        k = int(np.argmax(ps[1:])) + 1
-        return {"peak_freq_lpmm": float(freq[k]), "peak_power": float(ps[k])}
+        # Skip DC; the candidate anomalous peak is the maximum of the remainder.
+        body = ps[1:]
+        k = int(np.argmax(body)) + 1
+        # Significance test: a real line-noise peak must stand clear of the
+        # spectral noise floor. Use a robust median + n x MAD threshold; a plain
+        # argmax on pure white noise always returns some bin, which is NOT a
+        # detection. Below threshold -> report "no line noise detected".
+        median = float(np.median(body))
+        mad = float(np.median(np.abs(body - median)))
+        threshold = median + sig_factor * mad
+        detected = bool(ps[k] > threshold) and mad > 0.0
+        return {
+            "detected": detected,
+            "peak_freq_lpmm": float(freq[k]) if detected else None,
+            "peak_power": float(ps[k]),
+            "threshold": threshold,
+        }
 
     return MetricResult(
         name="line_noise",

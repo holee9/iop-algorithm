@@ -43,16 +43,21 @@ def make_slanted_edge(
     low: float = 1000.0,
     high: float = 5000.0,
     seed: int | None = None,
+    edge_pos_frac: float = 0.5,
 ) -> EdgePhantom:
     """Render a near-vertical edge blurred by a known Gaussian.
 
     The pixel value is the analytic error-function step (integral of the
     Gaussian LSF) of the signed perpendicular distance to the tilted edge, so
     the presampled MTF equals the pure Gaussian MTF (no pixel-aperture sinc).
+
+    `edge_pos_frac` places the edge centre at that fraction of the ROI width
+    (default 0.5 = centred); an off-centre value exercises the LSF-peak-centred
+    window (code-review finding #4).
     """
     ny, nx = shape
     slope = np.tan(np.radians(angle_deg))
-    x0 = nx / 2.0
+    x0 = nx * edge_pos_frac
     ys, xs = np.mgrid[0:ny, 0:nx].astype(np.float64)
     x_edge = x0 + slope * ys
     theta = np.arctan(slope)

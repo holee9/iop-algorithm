@@ -22,11 +22,13 @@ import numpy as np
 from common import robust_stats
 from common.contract import Params
 from common.xframe import XFrame
-from metrics.result import MetricCondition, MetricReadError, MetricResult
+from metrics.result import MetricCondition, MetricReadError, MetricResult, require_param
 
 P_EXPOSURE_END = "lag_exposure_end_index"  # index of last exposed frame (optional)
-P_BASELINE = "lag_dark_baseline"  # settled dark offset (optional; else last frame)
+P_BASELINE = "lag_dark_baseline"  # settled dark offset (optional; else detected)
 P_MIN_EXPOSED = "lag_min_exposed_signal"  # saturation-near premise floor [P]
+P_PLATEAU_FRAC = "lag_plateau_frac"  # exposed-plateau level fraction [P]
+P_SETTLE_FRAC = "lag_settle_frac"  # dark-tail settle criterion fraction [P]
 
 
 def _frame_signal(frame: XFrame) -> float:
@@ -54,17 +56,56 @@ def compute_first_frame_lag(
     if len(frames) < 2:
         raise MetricReadError("first-frame lag: need >= 2 frames (exposed + residual)")
     signals = np.array([_frame_signal(f) for f in frames], dtype=np.float64)
+    smin = float(signals.min())
+    smax = float(signals.max())
+    span = smax - smin
 
+    # -- settled dark baseline -------------------------------------------------
+    # argmax / last-frame defaults are unsafe: they silently accept a sequence
+    # with no settled dark tail. Detect the baseline from a settled tail (or use
+    # an explicit override) and raise when the tail is still decaying.
+    baseline = params.get(P_BASELINE)
+    if baseline is not None:
+        dark = float(baseline)
+    else:
+        if span <= 0:
+            raise MetricReadError(
+                "first-frame lag: flat sequence has no exposure/decay structure"
+            )
+        settle_frac = require_param(params, P_SETTLE_FRAC, float)
+        settle_tol = settle_frac * span
+        # The dark tail must have settled: the final step is within tolerance and
+        # the last frame sits near the sequence minimum (the dark offset).
+        if abs(signals[-1] - signals[-2]) > settle_tol or (signals[-1] - smin) > settle_tol:
+            raise MetricReadError(
+                "first-frame lag: no settled dark tail (residual still decaying "
+                "at the last frame); supply lag_dark_baseline explicitly"
+            )
+        dark = float(signals[-1])
+
+    # -- last exposed frame ----------------------------------------------------
     end_idx = params.get(P_EXPOSURE_END)
-    last_exposed = int(end_idx) if end_idx is not None else int(np.argmax(signals))
+    if end_idx is not None:
+        last_exposed = int(end_idx)
+    else:
+        # Detect the exposed plateau by LEVEL, not argmax: a mid-plateau noise
+        # spike must not be mistaken for the last exposed frame. Exposed frames
+        # sit above dark + plateau_frac * (peak - dark); the last such frame ends
+        # the plateau.
+        plateau_frac = require_param(params, P_PLATEAU_FRAC, float)
+        threshold = dark + plateau_frac * (smax - dark)
+        exposed_idx = np.nonzero(signals >= threshold)[0]
+        if exposed_idx.size == 0:
+            raise MetricReadError(
+                "first-frame lag: no exposed plateau above the detection level"
+            )
+        last_exposed = int(exposed_idx[-1])
+
     first_res = last_exposed + 1
     if first_res >= len(frames):
         raise MetricReadError(
             "first-frame lag: no residual frame after the exposed frame"
         )
-
-    baseline = params.get(P_BASELINE)
-    dark = float(baseline) if baseline is not None else float(signals[-1])
 
     exposed_signal = signals[last_exposed] - dark
     residual_signal = signals[first_res] - dark

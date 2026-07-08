@@ -1,9 +1,19 @@
-"""DQE(f) = MTF^2(f) * q * Ka / NPS(f) (REQ-METRICS-NPS-3, measurement §1.4).
+"""DQE(f) = MTF^2(f) / (q * Ka * NNPS(f)) (REQ-METRICS-NPS-3, IEC 62220-1).
 
-Consumes the MTF-group and NPS-group outputs (metrics.mtf, metrics.nps). q is an
-IEC table constant [S] and Ka is a per-acquisition measured input; both are
-injected via Params (REQ-METRICS-CORE-4). A divide-by-zero guard marks
-frequencies where NPS -> 0 as invalid (REQ-METRICS-NPS-7 / EC-3).
+Consumes the MTF-group and NPS-group outputs (metrics.mtf, metrics.nps). The
+input noise spectrum is the NORMALIZED NPS (NNPS = NPS / large-area-signal^2),
+so DQE is dimensionless: q*Ka is the photon fluence [1/mm^2] (q = photons per
+mm^2 per air-kerma [1/(mm^2*uGy)] [S], Ka = detector-plane air kerma [uGy]) and
+NNPS carries [mm^2], leaving DQE(f) dimensionless. Both q and Ka are injected via
+Params (REQ-METRICS-CORE-4). A divide-by-zero guard marks frequencies where
+NNPS -> 0 as invalid (REQ-METRICS-NPS-7 / EC-3).
+
+@MX:WARN: [AUTO] measurement protocol v1.0 §1.4 states
+"DQE = MTF^2 * q * Ka / NPS", which is dimensionally inverted and conflicts with
+IEC 62220-1; the IEC form (MTF^2 / (q*Ka*NNPS)) is implemented here.
+@MX:REASON: the protocol §1.4 expression is not dimensionless and grows without
+bound with dose, so it cannot be the true DQE; flagged for document correction
+(issue #2).
 
 @MX:ANCHOR: [AUTO] `compute_dqe` is the DQE public entry point (acceptance
 Scenario 3/4).
@@ -18,54 +28,56 @@ from __future__ import annotations
 import numpy as np
 
 from common.contract import Params
-from metrics.result import MetricCondition, MetricResult
+from metrics.result import MetricCondition, MetricResult, require_param
 
-P_Q = "dqe_q"  # RQA5 photon fluence per air kerma [S] (IEC table value)
-P_KA = "dqe_ka"  # detector-plane air kerma (per-acquisition measured input)
-P_NPS_FLOOR = "dqe_nps_floor"  # NPS magnitude below which DQE is invalid [P]
+P_Q = "dqe_q"  # photon fluence per air kerma [1/(mm^2*uGy)] [S] (IEC table value)
+P_KA = "dqe_ka"  # detector-plane air kerma [uGy] (per-acquisition measured input)
+P_NNPS_FLOOR = "dqe_nps_floor"  # NNPS magnitude below which DQE is invalid [P]
 
 
 def compute_dqe(
     frequencies_lpmm: np.ndarray,
     mtf: np.ndarray,
-    nps: np.ndarray,
+    nnps: np.ndarray,
     params: Params,
     *,
     calibset_id: str | None = None,
     dose_level: str | None = None,
 ) -> MetricResult:
-    """Compose DQE(f) from aligned MTF and NPS samples.
+    """Compose DQE(f) from aligned MTF and NNPS samples (IEC 62220-1).
 
     Args:
-        frequencies_lpmm: common frequency axis for `mtf` and `nps`.
-        mtf: presampled MTF(f) on that axis.
-        nps: NPS(f) on that axis.
-        params: externalized q, Ka and the NPS zero-guard floor.
+        frequencies_lpmm: common frequency axis for `mtf` and `nnps`.
+        mtf: presampled MTF(f) on that axis (dimensionless).
+        nnps: normalized NPS(f) = NPS/signal^2 on that axis [mm^2].
+        params: externalized q [1/(mm^2*uGy)], Ka [uGy] and the NNPS zero-guard
+            floor.
         calibset_id: consumed CalibSet id (metadata).
         dose_level: dose-level tag (metadata).
 
-    Frequencies where NPS <= floor yield DQE = NaN (invalid) rather than a
+    Frequencies where NNPS <= floor yield DQE = NaN (invalid) rather than a
     division by zero; their indices are reported in `invalid_indices`.
     """
     freq = np.asarray(frequencies_lpmm, dtype=np.float64)
     mtf_a = np.asarray(mtf, dtype=np.float64)
-    nps_a = np.asarray(nps, dtype=np.float64)
-    if not (freq.shape == mtf_a.shape == nps_a.shape):
-        raise ValueError("frequencies, mtf and nps must share the same shape")
+    nnps_a = np.asarray(nnps, dtype=np.float64)
+    if not (freq.shape == mtf_a.shape == nnps_a.shape):
+        raise ValueError("frequencies, mtf and nnps must share the same shape")
 
-    q = float(params.get(P_Q))
-    ka = float(params.get(P_KA))
-    floor = float(params.get(P_NPS_FLOOR))
+    q = require_param(params, P_Q, float)
+    ka = require_param(params, P_KA, float)
+    floor = require_param(params, P_NNPS_FLOOR, float)
+    fluence = q * ka  # photons per mm^2 [1/mm^2]
 
-    invalid = nps_a <= floor
+    invalid = nnps_a <= floor
     dqe = np.full_like(freq, np.nan)
     valid = ~invalid
-    dqe[valid] = (mtf_a[valid] ** 2) * q * ka / nps_a[valid]
+    dqe[valid] = (mtf_a[valid] ** 2) / (fluence * nnps_a[valid])
 
     warnings: list[str] = []
     if invalid.any():
         warnings.append(
-            f"DQE: {int(invalid.sum())} frequency bin(s) with NPS <= floor "
+            f"DQE: {int(invalid.sum())} frequency bin(s) with NNPS <= floor "
             f"({floor}) marked invalid (zero-division guard)"
         )
 

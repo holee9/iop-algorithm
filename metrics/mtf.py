@@ -22,7 +22,7 @@ import numpy as np
 
 from common.contract import Params
 from common.xframe import XFrame
-from metrics.result import MetricCondition, MetricReadError, MetricResult
+from metrics.result import MetricCondition, MetricReadError, MetricResult, require_param
 
 # Param keys (defaults documented by callers, never baked in as gate literals).
 P_PITCH = "pixel_pitch_mm"  # panel pitch (mm); Nyquist = 1/(2*pitch)
@@ -110,14 +110,31 @@ def _presampled_mtf(
     """
     lsf = np.gradient(esf)
     # Window the LSF (measurement protocol §1.2: differentiate + window) to
-    # suppress truncation tails before the transform.
-    window = np.hanning(lsf.size)
-    lsf = lsf * window
+    # suppress truncation tails before the transform. The Hann window MUST be
+    # centred on the LSF peak, not the array midpoint: a peak-offset ESF (e.g.
+    # an edge at 25% of the ROI width) would otherwise have its LSF core cut by
+    # the window skirt and the high-frequency MTF suppressed.
     n = lsf.size
+    peak = int(np.argmax(np.abs(lsf)))
+    idx = np.arange(n)
+    half = n / 2.0
+    d = np.abs(idx - peak)
+    window = np.where(d < half, 0.5 * (1.0 + np.cos(np.pi * d / half)), 0.0)
+    lsf = lsf * window
     spectrum = np.abs(np.fft.rfft(lsf))
-    mtf = spectrum / spectrum[0]
     # Sample spacing of the ESF is 1/oversample pixels -> cycles/pixel axis.
     freq_cyc_px = np.fft.rfftfreq(n, d=1.0 / oversample)
+    # Correct the finite-difference derivative attenuation: np.gradient uses a
+    # central difference over one ESF sample, whose transfer relative to the
+    # ideal derivative is sinc(2*pi*nu) with nu = cycles/ESF-sample. Undo it so
+    # the LSF spectrum equals the true differentiated ESF spectrum (guard nu=0).
+    nu = freq_cyc_px / oversample  # cycles per ESF sample
+    arg = 2.0 * np.pi * nu
+    deriv_tf = np.ones_like(arg)
+    nz = arg != 0.0
+    deriv_tf[nz] = np.sin(arg[nz]) / arg[nz]
+    spectrum = spectrum / np.abs(deriv_tf)
+    mtf = spectrum / spectrum[0]
     freq_lpmm = freq_cyc_px / pitch_mm
     return freq_lpmm, mtf
 
@@ -147,11 +164,11 @@ def compute_mtf(
     elif direction != "vertical":
         raise ValueError("direction must be 'vertical' or 'horizontal'")
 
-    pitch = float(params.get(P_PITCH))
-    oversample = int(params.get(P_OVERSAMPLE))
-    angle_min = float(params.get(P_ANGLE_MIN))
-    angle_max = float(params.get(P_ANGLE_MAX))
-    margin = float(params.get(P_ANGLE_MARGIN))
+    pitch = require_param(params, P_PITCH, float)
+    oversample = require_param(params, P_OVERSAMPLE, int)
+    angle_min = require_param(params, P_ANGLE_MIN, float)
+    angle_max = require_param(params, P_ANGLE_MAX, float)
+    margin = require_param(params, P_ANGLE_MARGIN, float)
 
     angle_deg, slope, intercept = estimate_edge_angle(image)
 

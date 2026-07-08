@@ -3,25 +3,38 @@
 Every test case is registered as a pytest case now so CI tracks the full matrix
 from T0. Cases beyond TC-000 are skipped with their TC id + the WP that will
 implement them. They are activated as their owning work packages land (T1+).
+
+Release-gate integrity (code-review finding #2): the TC-0xx cases here are the
+CI release gates defined in docs/XDET_TestSpec_v1.0.md. They gate PROCESSING
+work packages (correction / lag / NDT modules) against EV min thresholds — they
+are NOT existence checks for the T1 metrics engine. TC ids owned by later WPs
+therefore stay SKIPPED here until their processing module lands. The T1 metrics
+engine's own reproduction coverage lives under tests/metrics/* (its synthetic
+phantoms and analytic known values), independent of these gates.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
-# XDET-TC-001..005, 018 decision-engine PRODUCE parts are realized by the T1
-# metrics engine (SPEC-METRICS-001). Their synthetic-phantom reproduction lives
-# in tests/metrics/; the checks below activate those TC ids at the top level so
-# the CI matrix tracks them as real (no longer skipped).
-from metrics import defect_stats, dqe, lag, mtf, ndt, nps
-from tests.metrics.phantoms import generators as gen
-from tests.metrics.phantoms.params import make_params
-
-# (TC id, short reason / owning work package). Mirrors CLAUDE.md T1..T10 DoDs.
-# Deferred cases only; T1-owned ids (001-005, 018) are realized as real tests
-# below.
+# (TC id, short reason / owning work package). Mirrors CLAUDE.md T1..T10 DoDs and
+# the VV -> WP mapping in docs/XDET_TestSpec_v1.0.md.
+#
+# TC-001/002/003 (VV-001) gate the T2/WP1 offset/gain/defect CORRECTION modules
+#   ("보정 전/후 DQE·MTF 유지율", "Defect 보정 잔존 cluster") against EV-101/102/
+#   103 min — not the metrics engine. Deferred to T2.
+# TC-004/005 (VV-002) gate the T4/WP2 lag CORRECTION processing (first-frame lag
+#   %, ghost CNR reduced below EV-104 min). The metrics-engine lag/ghost readout
+#   is exercised in tests/metrics/test_lag.py. Deferred to T4.
+# TC-018 (VV-011) gates the T9/WP10 NDT module: SNRn/SRb auto-read PLUS IQI auto-
+#   read accuracy on GDS-NDT weld specimens against EV-301 min. It is not purely
+#   the metric readout (which lives in tests/metrics/test_ndt.py). Deferred to T9.
 _SKELETONS = [
+    ("XDET-TC-001", "offset/gain/defect correction: before/after DQE 3-dose (T2/WP1)"),
+    ("XDET-TC-002", "offset/gain/defect correction: before/after MTF@Nyquist (T2/WP1)"),
+    ("XDET-TC-003", "defect correction: residual cluster / miss-rate gate (T2/WP1)"),
+    ("XDET-TC-004", "lag correction: first-frame lag % vs EV-104 (T4/WP2)"),
+    ("XDET-TC-005", "lag correction: ghost residual CNR vs EV-104 (T4/WP2)"),
     ("XDET-TC-006", "line noise / reference-absent path (T3/WP3)"),
     ("XDET-TC-007", "line noise (T3/WP3)"),
     ("XDET-TC-008", "saturation / geometry (T3/WP4)"),
@@ -34,7 +47,7 @@ _SKELETONS = [
     ("XDET-TC-015", "grid-line suppression, observed-peak search (T7/WP8)"),
     ("XDET-TC-016", "grid density classes (T7/WP8)"),
     ("XDET-TC-017", "kernel virtual grid / SKS (T8/WP9)"),
-    ("XDET-TC-018", "NDT SNRn + IQI auto-read (T9/WP10)"),
+    ("XDET-TC-018", "NDT SNRn + IQI auto-read on weld specimens vs EV-301 (T9/WP10)"),
     ("XDET-TC-019", "NDT thickness correction (T9/WP10)"),
     ("XDET-TC-020", "tier gating structure (T10)"),
     ("XDET-TC-021", "equivalence numeric gate: bit-identical / +/-1 LSB (P2)"),
@@ -44,61 +57,3 @@ _SKELETONS = [
 @pytest.mark.parametrize("tc_id,reason", _SKELETONS, ids=[t[0] for t in _SKELETONS])
 def test_tc_skeleton(tc_id, reason):
     pytest.skip(f"{tc_id} deferred: {reason}")
-
-
-# --- T1 realized decision-engine PRODUCE parts (SPEC-METRICS-001) ----------
-
-
-def test_xdet_tc_001_nps_dqe_produce():
-    """XDET-TC-001: NPS/NNPS + DQE produced from synthetic uniform noise."""
-    params = make_params()
-    noise = gen.make_white_noise_frames()
-    nps_res = nps.compute_nps(noise.frames, params)
-    edge = gen.make_slanted_edge()
-    mtf_res = mtf.compute_mtf(edge.frame, params)
-    freqs = nps_res.get("frequencies_lpmm")
-    mtf_grid = np.interp(freqs, mtf_res.get("frequencies_lpmm"), mtf_res.get("mtf"))
-    dqe_res = dqe.compute_dqe(freqs, mtf_grid, nps_res.get("nps"), params)
-    assert dqe_res.get("dqe") is not None
-
-
-def test_xdet_tc_002_mtf_produce():
-    """XDET-TC-002: MTF produced by the edge method from a synthetic edge."""
-    edge = gen.make_slanted_edge()
-    res = mtf.compute_mtf(edge.frame, make_params())
-    assert 0.0 < res.get("mtf_at_nyquist") < 1.0
-
-
-def test_xdet_tc_003_defect_produce():
-    """XDET-TC-003: E2597 bad-pixel classification produced from stacks."""
-    phantom = gen.make_defect_stacks()
-    res = defect_stats.classify_defects(
-        phantom.dark_frames, phantom.flat_frames, make_params(), truth_map=phantom.truth_map
-    )
-    assert res.get("miss_rate") == 0.0
-
-
-def test_xdet_tc_004_first_frame_lag_produce():
-    """XDET-TC-004: first-frame lag % produced from an IRF decay sequence."""
-    phantom = gen.make_lag_sequence()
-    res = lag.compute_first_frame_lag(phantom.frames, make_params())
-    assert res.get("first_frame_lag_pct") > 0.0
-
-
-def test_xdet_tc_005_ghost_cnr_produce():
-    """XDET-TC-005: ghost residual CNR produced (mandatory LAG-5)."""
-    phantom = gen.make_ghost_frame()
-    res = lag.compute_ghost_cnr(
-        phantom.frame, phantom.foreground_roi, phantom.background_roi, make_params()
-    )
-    assert res.get("ghost_cnr") > 0.0
-
-
-def test_xdet_tc_018_snrn_produce():
-    """XDET-TC-018: SNRn + duplex-wire SRb produced from synthetic IQI."""
-    params = make_params()
-    duplex = gen.make_duplex_profile()
-    srb = ndt.read_duplex_srb(duplex.profile, duplex.pairs, params).get("srb_um")
-    uniform = gen.make_uniform_snr_frame()
-    res = ndt.compute_snrn(uniform.frame, uniform.roi, srb, params)
-    assert res.get("snrn") > 0.0
