@@ -89,8 +89,14 @@ def _highpass_correction(
     preserved. NaN (fully-masked) entries contribute zero correction.
 
     The FFT low-pass keeps the sharp separation exact for band-limited line
-    noise; a real (non-periodic) profile incurs the standard mild wrap seam,
-    accepted for the P1 golden model (accuracy over speed).
+    noise. A real (non-periodic) profile -- e.g. a slow background gradient --
+    incurs the standard mild wrap seam, but the low cutoff keeps the induced
+    Gibbs ringing at the field edges small (within the documented anatomy-
+    distortion bound, see test_line_noise wrap-seam regression, finding 9); it is
+    accepted for the P1 golden model (accuracy over speed). A linear-detrend
+    "fix" was rejected: on the discrete periodic banding profile its spurious
+    endpoint slope re-injects a several-count residual that a sound corrector
+    must not add.
     """
     finite = np.isfinite(profile)
     if not finite.any():
@@ -151,7 +157,14 @@ def _correct_reference(
     finite = np.isfinite(m)
     med = float(np.median(m[finite])) if finite.any() else 0.0
     mad = float(np.median(np.abs(m[finite] - med))) if finite.any() else 0.0
-    contaminated = (~finite) | (np.abs(m - med) > k * mad if mad > 0 else ~finite)
+    # k*MAD exclusion. When MAD == 0 the reference rows are (near-)identical, so
+    # the robust scale collapses: ANY deviation from the median is contamination
+    # (review finding 2). Falling back to ~finite there would silently disable
+    # exclusion and pass a metal-structure spike through as a bogus row
+    # correction.
+    dev = np.abs(np.where(finite, m, med) - med)  # NaN-safe (masked rows -> 0)
+    threshold = k * mad if mad > 0 else 0.0
+    contaminated = (~finite) | (finite & (dev > threshold))
     m_clean = _interp_contaminated(np.where(finite, m, np.nan), contaminated)
     out = image - m_clean[:, None]
     diag = {
@@ -185,14 +198,23 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     """
     window = _require(params, P_WINDOW)
     cutoff = _require(params, P_CUTOFF)
-    exclude = (np.asarray(frame.masks, dtype=np.uint8) & _EXCLUDE) != 0
+    masks_u8 = np.asarray(frame.masks, dtype=np.uint8)
+    exclude = (masks_u8 & _EXCLUDE) != 0
+    # SATURATION-flagged pixels are left UNMODIFIED by the subtraction: their
+    # clamped value (65535) must survive intact to the T5 saturation stage
+    # (review finding 5, vs SWR-602 no-restoration). DEFECT / INTERPOLATION
+    # pixels, by contrast, carry estimated values and may be corrected.
+    protect = (masks_u8 & np.uint8(MaskFlag.SATURATION)) != 0
     reference = _has_reference(calib, frame.shape)
 
     def _apply(img: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
         if reference is not None:
             k = _require(params, P_CONTAM_K)
-            return _correct_reference(img, exclude, reference, k)
-        return _correct_no_reference(img, exclude, int(window), cutoff)
+            out, diag = _correct_reference(img, exclude, reference, k)
+        else:
+            out, diag = _correct_no_reference(img, exclude, int(window), cutoff)
+        out[protect] = img[protect]  # restore saturated pixel values
+        return out, diag
 
     out_f64_full, diag = _apply(np.asarray(frame.pixel, dtype=np.float64))
     out_pixel = out_f64_full.astype(frame.pixel.dtype)

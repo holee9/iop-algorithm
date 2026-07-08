@@ -27,6 +27,7 @@ _LNSG_DEFAULTS.update(
         "line_noise_highpass_cutoff": 0.03,  # [T] high-pass cutoff (cycles/sample)
         "line_noise_contam_k": 6.0,  # SWR-502 k*MAD (appendix A pending)
         "line_noise_miscorr_tol": 8.0,  # [T] structure miscorrection abs tolerance
+        "line_noise_gradient_tol": 6.0,  # [T] max anatomy distortion at the FFT wrap seam (counts)
         # saturation
         "saturation_band_width": 2,  # SWR-602 W_band (appendix A pending)
         "raw_saturation_threshold": 60000.0,  # [B] S_th (offset stage)
@@ -174,6 +175,48 @@ def make_structure_phantom(
     )
 
 
+@dataclass(frozen=True)
+class GradientLinePhantom:
+    observed: np.ndarray  # gradient anatomy + NON-periodic line noise + noise
+    clean: np.ndarray  # ground-truth (gradient anatomy, no line noise)
+    row_offset: np.ndarray  # injected per-row NON-periodic banding
+
+
+def make_nonperiodic_line_noise_phantom(
+    shape=(128, 128),
+    background=3000.0,
+    grad_row=6.0,  # anatomy: linear ramp along rows (non-periodic, big seam)
+    grad_col=4.0,  # anatomy: linear ramp along columns
+    band_amp=40.0,  # NON-periodic row banding (random, not a clean sinusoid)
+    noise_sigma=2.0,
+    seed=7,
+) -> GradientLinePhantom:
+    """Anatomy = a smooth linear gradient (deliberately NON-periodic so the FFT
+    wrap seam is exercised, review finding 9) plus high-frequency, NON-periodic
+    per-row banding (random offsets). SWR-503 must remove the banding while
+    preserving the gradient across the whole field, including the edges where a
+    naive rfft rings."""
+    ny, nx = shape
+    rng = np.random.default_rng(seed)
+    r = np.arange(ny)
+    c = np.arange(nx)
+    ramp = grad_row * (r / (ny - 1))[:, None] + grad_col * (c / (nx - 1))[None, :]
+    clean = background + ramp
+    # Non-periodic high-frequency banding: white per-row offsets high-passed by
+    # construction (subtract a slow moving average so it is banding, not ramp).
+    raw_band = band_amp * rng.standard_normal(ny)
+    slow = np.convolve(raw_band, np.ones(9) / 9.0, mode="same")
+    row_offset = raw_band - slow  # zero-mean high-frequency per-row banding
+    observed = (
+        clean
+        + row_offset[:, None]
+        + rng.normal(0.0, noise_sigma, size=shape)
+    )
+    return GradientLinePhantom(
+        observed.astype(np.float32), clean.astype(np.float64), row_offset
+    )
+
+
 # ---------------------------------------------------------------------------
 # Geometry phantom (ideal grid of Gaussian dots + known polynomial distortion).
 # ---------------------------------------------------------------------------
@@ -209,28 +252,35 @@ def make_grid_phantom(
     a=6.0,  # distortion strength (px); peak |D| = a/sqrt(2)
     degree=2,
 ) -> GridPhantom:
-    from scipy.ndimage import map_coordinates
-
     ny, nx = shape
     rows = np.arange(margin, ny - margin + 1, spacing)
     cols = np.arange(margin, nx - margin + 1, spacing)
     centers = np.array([(r, c) for r in rows for c in cols], dtype=np.float64)
 
     rr, cc = np.mgrid[0:ny, 0:nx].astype(np.float64)
-    ideal = np.zeros(shape, dtype=np.float64)
-    for (r, c) in centers:
-        ideal += amplitude * np.exp(
-            -(((rr - r) ** 2 + (cc - c) ** 2) / (2.0 * dot_sigma**2))
-        )
+
+    def _gaussian_field(sr: np.ndarray, sc: np.ndarray) -> np.ndarray:
+        """Analytic sum-of-Gaussians image sampled at coordinates (sr, sc)."""
+        field = np.zeros(shape, dtype=np.float64)
+        for (r, c) in centers:
+            field += amplitude * np.exp(
+                -(((sr - r) ** 2 + (sc - c) ** 2) / (2.0 * dot_sigma**2))
+            )
+        return field
+
+    ideal = _gaussian_field(rr, cc)
 
     cx, cy = _linear_coeffs(a, degree)
     u = cc / max(nx - 1, 1)
     v = rr / max(ny - 1, 1)
     d_col = a * (u - 0.5)
     d_row = a * (v - 0.5)
-    # observed[p] = ideal[p + D(p)]  (forward distortion via pull-resampling)
-    coords = np.stack([rr + d_row, cc + d_col], axis=0)
-    observed = map_coordinates(ideal, coords, order=3, mode="reflect")
+    # observed[p] = ideal[p + D(p)] evaluated ANALYTICALLY (the Gaussian field
+    # sampled directly at the distorted coordinates), NOT via the same
+    # map_coordinates spline the corrector uses. This avoids the inverse crime
+    # (review finding 10): a sign or normalization error in the module's inverse
+    # warp now fails the residual gate instead of cancelling out.
+    observed = _gaussian_field(rr + d_row, cc + d_col)
     residual = float(np.max(np.sqrt(d_row**2 + d_col**2)))
     return GridPhantom(
         ideal.astype(np.float32),

@@ -12,6 +12,7 @@ from tests.modules.phantoms.linesat import (
     line_noise_calib,
     lnsg_params,
     make_line_noise_phantom,
+    make_nonperiodic_line_noise_phantom,
     make_structure_phantom,
 )
 
@@ -82,6 +83,33 @@ def test_ec3_mask_exclusion_negative_control():
     err_excl = abs(float(np.mean(np.asarray(out_excl.pixel)[29])) - bg)
     err_incl = abs(float(np.mean(np.asarray(out_incl.pixel)[29])) - bg)
     assert err_excl < err_incl
+
+
+def test_nonperiodic_gradient_anatomy_preserved_and_banding_removed():
+    """Review finding 9: a NON-periodic anatomy (linear gradient) exercises the
+    FFT wrap seam. The mirror-extended high-pass must remove the non-periodic
+    row banding while preserving the gradient across the whole field -- including
+    the edges, where a naive rfft would ring and distort the anatomy."""
+    ph = make_nonperiodic_line_noise_phantom(shape=(128, 128))
+    params = lnsg_params()
+    tol = float(params.get("line_noise_gradient_tol"))
+
+    frame = new_frame(ph.observed)
+    out = line_noise.process(frame, line_noise_calib(frame.shape), params)
+    corrected = np.asarray(out.pixel, dtype=np.float64)
+    clean = ph.clean
+
+    # (a) Anatomy (gradient) preserved everywhere within the documented bound,
+    # and specifically at the top/bottom edge rows (the wrap-seam danger zone).
+    assert float(np.mean(np.abs(corrected - clean))) < tol
+    edge = np.r_[0:4, clean.shape[0] - 4 : clean.shape[0]]
+    edge_err = np.abs(corrected[edge].mean(axis=1) - clean[edge].mean(axis=1))
+    assert float(np.max(edge_err)) < tol
+
+    # (b) Non-periodic row banding removed: residual per-row banding variance is
+    # a small fraction of the injected banding variance.
+    resid_banding = corrected.mean(axis=1) - clean.mean(axis=1)
+    assert float(np.var(resid_banding)) < 0.05 * float(np.var(ph.row_offset))
 
 
 def test_scenario6_detect_line_noise_before_after():

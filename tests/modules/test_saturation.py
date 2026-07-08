@@ -29,29 +29,71 @@ def test_scenario3_consumes_accumulated_saturation_mask():
     """REQ-LNSG-SAT-1: accumulated SATURATION mask consumed and forwarded;
     input immutable, history updated."""
     frame, sat = _sat_frame()
+    masks_before = np.asarray(frame.masks).copy()  # snapshot BEFORE process
     out = saturation.process(frame, saturation_calib(frame.shape), lnsg_params())
 
     out_sat = (np.asarray(out.masks) & int(MaskFlag.SATURATION)) != 0
     assert np.all(out_sat[sat])  # every saturated pixel retained
-    assert np.array_equal(frame.masks, np.asarray(frame.masks))  # input unchanged
+    # Input mask stack unchanged vs the pre-process snapshot (DATA-6).
+    assert np.array_equal(np.asarray(frame.masks), masks_before)
     assert out.history[-1].module_name == "saturation"
+
+
+def test_saturation_stage_is_idempotent():
+    """Re-running the saturation stage yields identical output: the band is
+    flagged SATURATION_BAND (not SATURATION), so the second run dilates only the
+    original SATURATION core and produces the same band (no 2px-per-run growth,
+    review finding 4)."""
+    frame, _ = _sat_frame()
+    calib = saturation_calib(frame.shape)
+    params = lnsg_params(saturation_band_width=2)
+
+    once = saturation.process(frame, calib, params)
+    twice = saturation.process(once, calib, params)
+
+    assert np.array_equal(np.asarray(once.masks), np.asarray(twice.masks))
+    assert (
+        once.history[-1].extra["boundary_band_pixels"]
+        == twice.history[-1].extra["boundary_band_pixels"]
+    )
+
+
+def _expected_band(sat: np.ndarray, width: int) -> np.ndarray:
+    """Independent brute-force boundary band: pixels within Chebyshev distance
+    `width` of a saturated core pixel, excluding the core itself. Computed here
+    without dilate_mask so the test does not validate the module against its own
+    dilation implementation (review finding 7)."""
+    ny, nx = sat.shape
+    core = np.argwhere(sat)
+    expected = np.zeros(sat.shape, dtype=bool)
+    for r in range(ny):
+        for c in range(nx):
+            if sat[r, c]:
+                continue
+            # Chebyshev distance to nearest core pixel.
+            if core.size == 0:
+                continue
+            cheb = np.maximum(np.abs(core[:, 0] - r), np.abs(core[:, 1] - c)).min()
+            if cheb <= width:
+                expected[r, c] = True
+    return expected
 
 
 def test_scenario4_boundary_band_marked():
     """REQ-LNSG-SAT-2: a W_band boundary band around the saturated region is
-    flagged SATURATION (dilation approximation, spec decision 3)."""
+    flagged SATURATION_BAND (dilation approximation, spec decision 3)."""
     frame, sat = _sat_frame()
     params = lnsg_params(saturation_band_width=2)
     out = saturation.process(frame, saturation_calib(frame.shape), params)
 
-    out_sat = (np.asarray(out.masks) & int(MaskFlag.SATURATION)) != 0
-    band = out_sat & ~sat
+    band = (np.asarray(out.masks) & int(MaskFlag.SATURATION_BAND)) != 0
     assert band.any()
     assert out.history[-1].extra["boundary_band_pixels"] == int(np.count_nonzero(band))
-    # Band pixels are within 2px (Chebyshev) of the saturated core.
-    from common.mask_ops import dilate_mask
-
-    assert np.all(band <= dilate_mask(sat, 2))
+    # Band == independent brute-force Chebyshev band (not the module's own
+    # dilate_mask), and never overlaps the saturated core.
+    expected = _expected_band(sat, 2)
+    assert np.array_equal(band, expected)
+    assert not np.any(band & sat)
 
 
 def test_scenario5_saturation_statistics_in_history():

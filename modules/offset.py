@@ -35,12 +35,19 @@ P_RAW_SAT = "raw_saturation_threshold"  # raw saturation point S_th [B] (SWR-601
 # Physical floor for unsigned raw after subtraction ([S], not tunable).
 _RAW_FLOOR = 0.0
 
-# Default raw saturation threshold when the [B] value is not injected: ~98% of
-# the 16-bit full scale (SPEC-CORR-001 REQ-CORR-OFFSET-4; dose-step response
-# saturation point pending real measurement, appendix A). Documented [B] default
-# -- never a silent magic number: callers override via Params `raw_saturation_
-# threshold`.
-_RAW_SAT_DEFAULT = 0.98 * 65535.0  # ~= 64224.3
+
+def _require(params: Params, key: str) -> float:
+    """Fetch a REQUIRED Params key, raising an explicit error when absent.
+
+    @MX:NOTE: [AUTO] TBD-[B] values (raw_saturation_threshold) are never given a
+    silent in-module default (SWR-000-5 / no-silent-default). The caller must
+    inject the dose-step response saturation point (appendix A); a missing key
+    is a configuration error, not a reason to invent ~0.98*full-scale.
+    """
+    value = params.get(key)
+    if value is None:
+        raise ValueError(f"offset: missing required parameter '{key}'")
+    return float(value)
 
 
 def _read_offset(calib: CalibSet, shape: tuple[int, ...]) -> np.ndarray:
@@ -84,8 +91,7 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     # saturation detection (SPEC-LNSG-001 decision 2). Pixels with I_raw >= S_th
     # are flagged SATURATION; the flag accumulates (union) with the gain-clamp
     # SATURATION downstream and is consumed by the T3 saturation module.
-    s_th = params.get(P_RAW_SAT)
-    s_th = _RAW_SAT_DEFAULT if s_th is None else float(s_th)
+    s_th = _require(params, P_RAW_SAT)
     raw_in = np.asarray(frame.pixel, dtype=np.float64)
     raw_sat = raw_in >= s_th
     raw_sat_rate = float(np.count_nonzero(raw_sat)) / raw_sat.size

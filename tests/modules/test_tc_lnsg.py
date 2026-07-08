@@ -149,7 +149,7 @@ def test_scenario10_saturation_harness_full_xframe_match():
     sat = (masks & int(MaskFlag.SATURATION)) != 0
     band = dilate_mask(sat, 2) & ~sat
     exp_masks = masks.copy()
-    exp_masks[band] |= int(MaskFlag.SATURATION)
+    exp_masks[band] |= int(MaskFlag.SATURATION_BAND)
     n_sat = int(np.count_nonzero(sat))
     entry = HistoryEntry(
         "saturation", "1.0.0", params.hash(), calib.calibset_id,

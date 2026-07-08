@@ -5,9 +5,13 @@ This module consumes the SATURATION mask accumulated upstream (offset raw
 detection I_raw >= S_th, SPEC-CORR-001 REQ-CORR-OFFSET-4, UNION gain-clamp
 65535, REQ-CORR-GAIN-2) and hands it downstream as the denoiser / contrast-
 enhancement exclusion substrate. It marks a boundary band (width W_band, SWR-602
-2px) around saturated regions by dilating the SATURATION mask (spec decision 3:
-dilation is a conservative approximation of the graded buffer weighting the T5
-denoiser will apply).
+2px) around saturated regions by dilating the SATURATION core and flagging the
+band with the distinct SATURATION_BAND bit (spec decision 3: dilation is a
+conservative approximation of the graded buffer weighting the T5 denoiser will
+apply). SATURATION_BAND is kept separate from SATURATION so the stage is
+idempotent (band never re-grows on re-run) and downstream noise-weighted stages
+can distinguish an invented buffer pixel from a truly saturated one; both bits
+must be treated as denoiser-exclusion substrate.
 
 REQ-LNSG-SAT-3 (SWR-602 [HARD] no restoration) postconditions, exact:
   (1) saturated pixel VALUES are unchanged (no extrapolation / reconstruction),
@@ -62,14 +66,17 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     masks_in = np.asarray(frame.masks, dtype=np.uint8)
     sat = (masks_in & np.uint8(MaskFlag.SATURATION)) != 0
 
-    # Boundary band = dilation of the saturated region minus the core itself
-    # (SWR-602 W_band). The band pixels are flagged SATURATION as the
-    # conservative buffer-weighting substrate (spec decision 3).
+    # Boundary band = dilation of the saturated CORE minus the core itself
+    # (SWR-602 W_band). The band pixels are flagged SATURATION_BAND (a distinct
+    # bit, not SATURATION) as the conservative buffer-weighting substrate (spec
+    # decision 3). Using a distinct flag with the core-only dilation source makes
+    # the stage idempotent: re-running dilates the same SATURATION core and never
+    # grows the band (review finding 4). The band never overlaps the core.
     dilated = dilate_mask(sat, band_width)
     band = dilated & ~sat
 
     new_masks = masks_in.copy()
-    new_masks[band] |= np.uint8(MaskFlag.SATURATION)
+    new_masks[band] |= np.uint8(MaskFlag.SATURATION_BAND)
     # No INTERPOLATION is set here and no pixel value is touched (SAT-3).
 
     new = replace(frame, masks=new_masks)

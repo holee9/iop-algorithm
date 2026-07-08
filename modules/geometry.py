@@ -20,6 +20,11 @@ v=y/(ny-1): observed[p] = ideal[p + D(p)]. Correction resamples
 corrected[p] = observed[p + E(p)] where E is the numerically inverted field
 (E(p) = -D(p + E(p)), fixed-point), so corrected[p] == ideal[p].
 
+The mask stack is transported through the same inverse warp (per-bitplane
+nearest-neighbor, order=0) so flags stay registered to the pixels they mark.
+Output pixels whose source coordinate falls outside the frame are boundary fill
+(reflect-mode invented data) and are flagged DEFECT.
+
 @MX:ANCHOR: [AUTO] `process` is the geometry pipeline stage entry point invoked
 via the orchestrator registry (REQ-LNSG-CONTRACT-1/6).
 @MX:REASON: fan_in is the orchestrator registry plus the harness and the
@@ -38,7 +43,7 @@ from scipy.ndimage import map_coordinates
 
 from common.calibset import CalibSet
 from common.contract import Params
-from common.xframe import HistoryEntry, XFrame
+from common.xframe import HistoryEntry, MaskFlag, XFrame
 
 MODULE_NAME = "geometry"
 MODULE_VERSION = "1.0.0"
@@ -121,6 +126,38 @@ def _resample(image: np.ndarray, e_row: np.ndarray, e_col: np.ndarray, order: in
     return map_coordinates(image, coords, order=order, mode="reflect")
 
 
+def _warp_masks(
+    masks: np.ndarray, e_row: np.ndarray, e_col: np.ndarray, ny: int, nx: int
+) -> np.ndarray:
+    """Transport the mask stack through the SAME inverse warp as the pixels.
+
+    Each bitplane is resampled independently with nearest-neighbor (order=0) so
+    a flag lands on the output pixel that pulled from the flagged source pixel
+    (flags move with pixels, review finding 1). Output pixels whose source
+    coordinate falls OUTSIDE the frame are boundary fill: the pixel path invents
+    their value via the reflect boundary mode, so they are flagged DEFECT
+    (documented policy -- the data there is not real).
+    """
+    m = np.asarray(masks, dtype=np.uint8)
+    rr, cc = np.mgrid[0:ny, 0:nx].astype(np.float64)
+    src_r = rr + e_row
+    src_c = cc + e_col
+    coords = np.stack([src_r, src_c], axis=0)
+
+    out = np.zeros((ny, nx), dtype=np.uint8)
+    bit = 1
+    while bit < 256:  # covers every defined MaskFlag bit (max 8 at present)
+        if np.any((m & bit) != 0):
+            plane = ((m & bit) != 0).astype(np.float64)
+            warped = map_coordinates(plane, coords, order=0, mode="constant", cval=0.0)
+            out[warped > 0.5] |= np.uint8(bit)
+        bit <<= 1
+
+    outside = (src_r < 0) | (src_r > ny - 1) | (src_c < 0) | (src_c > nx - 1)
+    out[outside] |= np.uint8(MaskFlag.DEFECT)
+    return out
+
+
 def _read_coeffs(calib: CalibSet, key: str, degree: int) -> np.ndarray:
     if key not in calib.data:
         raise ValueError(f"geometry: CalibSet(OTHER) missing data key '{key}'")
@@ -185,6 +222,10 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
         )
 
     new = frame.with_pixel(out_pixel, out_f64)
+    # Transport the mask stack through the same inverse warp (flags must move
+    # with the pixels; border-filled pixels are flagged DEFECT).
+    new_masks = _warp_masks(frame.masks, e_row, e_col, ny, nx)
+    new = replace(new, masks=new_masks)
     entry = HistoryEntry(
         module_name=MODULE_NAME,
         module_version=MODULE_VERSION,

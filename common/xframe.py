@@ -65,6 +65,11 @@ class MaskFlag(IntFlag):
     DEFECT = 1
     SATURATION = 2
     INTERPOLATION = 4
+    # Boundary buffer band around a saturated core (SWR-602 W_band). Distinct
+    # from SATURATION so the saturation stage is idempotent (the band is never
+    # re-dilated into a wider band on re-run) and so downstream consumers can
+    # tell the invented buffer zone from a truly saturated pixel.
+    SATURATION_BAND = 8
 
 
 @dataclass(frozen=True)
