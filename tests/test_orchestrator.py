@@ -27,6 +27,10 @@ def _calib_for(stage: str) -> CalibSet:
     # stage name, so it is mapped explicitly (SPEC-DENOISE-001 decision 2/5).
     if stage == "denoise":
         kind = CalibKind.NOISE
+    elif stage == "virtual_grid":
+        # virtual_grid is wired to CalibKind.SCATTER (value "scatter"), whose
+        # value differs from the stage name (SPEC-VGRID-001 decision 2).
+        kind = CalibKind.SCATTER
     else:
         try:
             kind = CalibKind(stage)
