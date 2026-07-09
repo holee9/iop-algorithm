@@ -69,6 +69,69 @@ def radial_frequency_axes(
     return fy, fx
 
 
+def axial_welch_psd(
+    image: np.ndarray,
+    axis: int,
+    pitch_mm: float,
+    *,
+    detrend: bool = True,
+    window: str | None = "hann",
+) -> tuple[np.ndarray, np.ndarray]:
+    """1D power spectral density along `axis`, averaged over perpendicular lines.
+
+    @MX:NOTE: [AUTO] First-consumer extension for grid-line suppression (T7,
+    SPEC-GRID-001, SWR-1002 "해당 축 1D PSD (전 행 평균, Welch)"). Kept in the
+    shared FFT/PSD component so the grid module consumes it rather than
+    re-implementing FFT locally (SWR-000-9 no duplication).
+
+    The estimate is a Bartlett/Welch average: each line perpendicular to the
+    scanned axis contributes one periodogram and the periodograms are averaged,
+    trading resolution for variance. This is the axial equivalent of the
+    ensemble average axial_1d_nps performs on 2D NPS.
+
+    Args:
+        image: 2D array.
+        axis: axis ALONG which the spectrum is taken. axis=1 scans columns (x),
+            averaging over rows — the estimator for a VERTICAL grid whose
+            modulation is periodic along x. axis=0 scans rows (y), averaging over
+            columns — for a HORIZONTAL grid.
+        pitch_mm: sample spacing (mm); the frequency axis extends to the detector
+            Nyquist 1/(2*pitch).
+        detrend: subtract each line's mean before the transform so the DC / slow
+            trend of anatomy does not leak into the low-frequency bins.
+        window: taper applied along `axis` before the transform ("hann" by
+            default, or None). Windowing suppresses the sinc leakage a sharp step
+            (edge) would otherwise spread across the band as spurious sidelobe
+            peaks — the standard Welch/Bartlett tapering that makes a narrowband
+            grid peak stand out cleanly against a sloped edge spectrum.
+
+    Returns:
+        (freq_lpmm, psd) over the non-negative half-axis (rfft), both length
+        n//2 + 1 where n = image.shape[axis].
+    """
+    arr = np.asarray(image, dtype=np.float64)
+    if arr.ndim != 2:
+        raise ValueError("axial_welch_psd expects a 2D image")
+    if axis not in (0, 1):
+        raise ValueError("axis must be 0 or 1")
+    if detrend:
+        arr = arr - arr.mean(axis=axis, keepdims=True)
+    n = arr.shape[axis]
+    if window == "hann":
+        taper = np.hanning(n)
+        shape = [1, 1]
+        shape[axis] = n
+        arr = arr * taper.reshape(shape)
+    elif window is not None:
+        raise ValueError("window must be 'hann' or None")
+    spectrum = np.fft.rfft(arr, axis=axis)
+    power = np.abs(spectrum) ** 2
+    other = 1 - axis
+    psd = power.mean(axis=other)
+    freq = np.fft.rfftfreq(n, d=pitch_mm)
+    return freq, psd
+
+
 def axial_1d_nps(
     nps2d: np.ndarray,
     pitch_mm: float,
