@@ -83,7 +83,17 @@ class PipelineDefinition:
 
     @classmethod
     def full(cls) -> "PipelineDefinition":
-        """Definition running every canonical stage in order."""
+        """Definition running every canonical stage in order (including denoise).
+
+        A ``full()`` run therefore requires a COMPLETE configuration for every
+        stage: the entry gate demands a matching CalibSet per stage (e.g.
+        CalibSet(NOISE) for denoise) and each module demands its externalized
+        Params bundle. A missing calibration surfaces as a CalibrationError at the
+        entry gate BEFORE any frame is processed; a missing denoise parameter
+        surfaces as an explicit named DenoiseError at the start of the denoise
+        stage (also before that stage touches pixel data). Both are loud, early,
+        named failures — never a silent default substitution (SWR-000-5).
+        """
         return cls(stages=CANONICAL_ORDER)
 
 

@@ -85,6 +85,7 @@ def fit_noise_model(
     created_at: str = "",
     source: str = "noise-model-builder",
     sigma2_floor_tol: float = 1e-6,
+    sigma2_clamp_tol_frac: float = 0.05,
 ) -> CalibSet:
     """Fit var = alpha*mean + sigma**2 from dose levels -> CalibSet(NOISE).
 
@@ -128,15 +129,17 @@ def fit_noise_model(
             "variance must increase with signal (degenerate calibration)"
         )
     # A small negative intercept is an estimation artifact (the read-noise
-    # variance is tiny relative to alpha*mean); clamp it to 0 within a tolerance
-    # scaled to the variance range. A grossly negative intercept is a degenerate
-    # fit and is refused.
+    # variance is tiny relative to alpha*mean); clamp it to 0 within a [T]
+    # tolerance scaled to the variance range (``sigma2_clamp_tol_frac``). A
+    # grossly negative intercept is a degenerate fit and is refused.
     var_scale = float(np.mean(np.abs(variances))) or 1.0
-    if sigma_sq < -(abs(sigma2_floor_tol) + 0.05 * var_scale):
+    clamp_tol = abs(sigma2_floor_tol) + abs(sigma2_clamp_tol_frac) * var_scale
+    if sigma_sq < -clamp_tol:
         raise NoiseModelCalibrationError(
             f"noise model: fitted read-noise variance sigma^2={sigma_sq:.6g} is "
             "negative beyond tolerance (degenerate calibration)"
         )
+    clamped_negative = sigma_sq < 0.0
     sigma = float(np.sqrt(max(sigma_sq, 0.0)))
 
     # Regression quality note for the audit trail (IEC 62304 traceability).
@@ -149,6 +152,13 @@ def fit_noise_model(
         f"noise-model fit: alpha={alpha:.6g}, sigma={sigma:.6g}, "
         f"n_dose={len(dose_levels)}, r2={r2:.6g}"
     )
+    if clamped_negative:
+        # Record the clamp in provenance so a high-dose-only calibration (whose
+        # intercept the regression cannot resolve) is not silently masked.
+        quality_note += (
+            f"; WARNING: negative read-noise variance sigma^2={sigma_sq:.6g} "
+            f"clamped to 0 (within tolerance {clamp_tol:.6g})"
+        )
 
     return CalibSet(
         panel_id=panel_id,

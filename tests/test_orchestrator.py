@@ -78,6 +78,42 @@ def test_pipeline_runs_in_fixed_order(frame):
     assert executed == list(CANONICAL_ORDER)
 
 
+def test_full_definition_covers_all_canonical_stages():
+    """Defect 2: full() means 'full' — it returns ALL canonical stages in order,
+    including the denoise stage. Callers must supply complete calib/params."""
+    assert PipelineDefinition.full().stages == CANONICAL_ORDER
+
+
+def test_full_run_missing_denoise_calib_errors_at_gate(frame):
+    """Defect 2: a full() run with the real denoise module but no CalibSet(NOISE)
+    fails LOUDLY at the entry gate BEFORE any frame is processed."""
+    from modules import denoise
+
+    definition = PipelineDefinition.full()
+    registry = {s: _stage_module(s) for s in CANONICAL_ORDER}
+    registry["denoise"] = denoise.process
+    calib_map = {s: _calib_for(s) for s in CANONICAL_ORDER}
+    del calib_map["denoise"]  # missing noise calibration
+    with pytest.raises(CalibrationError, match="denoise"):
+        run_pipeline(frame, definition, registry, calib_map)
+
+
+def test_full_run_missing_denoise_params_errors_before_processing(frame):
+    """Defect 2: with calib present but the denoise Params bundle absent, the
+    denoise stage raises an explicit named DenoiseError at entry (fail fast)."""
+    from modules import denoise
+    from tests.modules.phantoms.denoise_syn import noise_calib
+
+    definition = PipelineDefinition.full()
+    registry = {s: _stage_module(s) for s in CANONICAL_ORDER}
+    registry["denoise"] = denoise.process
+    calib_map = {s: _calib_for(s) for s in CANONICAL_ORDER}
+    calib_map["denoise"] = noise_calib(FRAME_SHAPE)  # valid (alpha,sigma) payload
+    # No params_map -> denoise stage gets empty Params -> named missing-param error.
+    with pytest.raises(denoise.DenoiseError, match="missing required parameter"):
+        run_pipeline(frame, definition, registry, calib_map)
+
+
 def test_input_frame_preserved_across_pipeline(frame):
     definition = PipelineDefinition(stages=("offset", "gain"))
     registry = {"offset": passthrough.process, "gain": passthrough.process}

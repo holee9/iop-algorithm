@@ -89,6 +89,28 @@ def _require(params: Params, key: str, cast=float):
     return cast(value)
 
 
+def _required_keys(method: str) -> tuple[str, ...]:
+    """The Params keys a denoise run requires, given the selected method."""
+    keys = [P_STRENGTH, P_LUT_LAMBDA_MAX, P_LUT_NODES, P_LUT_GH_NODES]
+    if method == "bm3d":
+        keys += [
+            P_BLOCK, P_STEP, P_MAX_MATCH, P_SEARCH, P_LAMBDA3D,
+            P_KAISER_BETA, P_MATCH_TAU_HARD, P_MATCH_TAU_WIENER,
+        ]
+    elif method == "nlm":
+        keys += [P_NLM_H, P_NLM_PATCH, P_NLM_WINDOW]
+    return tuple(keys)
+
+
+def _require_present(params: Params, keys: tuple[str, ...]) -> None:
+    """Fail fast with an explicit named error if any required key is absent."""
+    missing = [k for k in keys if params.get(k) is None]
+    if missing:
+        raise DenoiseError(
+            f"denoise: missing required parameter(s) {missing}"
+        )
+
+
 # -- noise model resolution (REQ-DENOISE-VST-1/2) ------------------------------
 
 
@@ -158,8 +180,17 @@ def _build_inverse_lut(
     denoised transform value D is lambda = interp(D, M_grid, lambda_grid).
 
     This is the ONLY inverse — there is no asymptotic ((f/2)^2) branch anywhere.
+
+    lambda_max MUST be chosen >= the panel full-scale signal (e.g. the 16-bit
+    range) so the LUT domain covers every unmasked pixel's transform value;
+    process() validates this at entry and refuses (rather than silently clamping
+    bright highlights) when the frame's GAT range exceeds M(lambda_max). The node
+    grid is quadratically spaced (dense near 0, coarse near lambda_max) so the LUT
+    stays accurate at low counts while still covering the full 16-bit range with a
+    manageable node count.
     """
-    lambda_grid = np.linspace(0.0, float(lambda_max), int(n_nodes))
+    t = np.linspace(0.0, 1.0, int(n_nodes))
+    lambda_grid = float(lambda_max) * t * t  # quadratic: dense near 0
     gh_x, gh_w = _gauss_hermite(gh_nodes)
     # eps = sqrt(2)*sigma*gh_x with normalized weights gh_w/sqrt(pi).
     eps = np.sqrt(2.0) * sigma * gh_x
@@ -277,6 +308,35 @@ def _largest_pow2(n: int) -> int:
     return 1 << (int(n).bit_length() - 1)
 
 
+def _is_pow2(n: int) -> bool:
+    return n >= 1 and (int(n) & (int(n) - 1)) == 0
+
+
+def _fill_masked(noisy: np.ndarray, valid: np.ndarray, block: int) -> np.ndarray:
+    """Replace masked (invalid) pixel values with a local valid-neighborhood
+    estimate so extreme saturated/defect values never enter the Haar spectrum and
+    bleed into neighboring blocks (REQ-DENOISE-BM3D-2). Each invalid pixel takes
+    the block-median of the valid pixels in its surrounding block-sized window;
+    isolated invalid pixels fall back to the global valid median. Masked pixels'
+    own OUTPUTS are handled separately (value-preserved in _run)."""
+    if valid.all():
+        return noisy
+    ny, nx = noisy.shape
+    filled = noisy.copy()
+    half = max(1, block) // 2
+    global_med = float(np.median(noisy[valid])) if valid.any() else 0.0
+    inv_ys, inv_xs = np.nonzero(~valid)
+    for y, x in zip(inv_ys.tolist(), inv_xs.tolist()):
+        y0, y1 = max(0, y - half), min(ny, y + half + 1)
+        x0, x1 = max(0, x - half), min(nx, x + half + 1)
+        win_valid = valid[y0:y1, x0:x1]
+        if win_valid.any():
+            filled[y, x] = float(np.median(noisy[y0:y1, x0:x1][win_valid]))
+        else:
+            filled[y, x] = global_med
+    return filled
+
+
 def _ref_positions(size: int, block: int, step: int) -> list[int]:
     if size < block:
         return []
@@ -354,12 +414,31 @@ def _bm3d(
     tau_hard = _require(params, P_MATCH_TAU_HARD, float)
     tau_wiener = _require(params, P_MATCH_TAU_WIENER, float)
 
+    # The orthonormal Haar depth transform requires power-of-two block and group
+    # sizes; a non-power-of-two would otherwise fail deep inside numpy with a
+    # cryptic shape error. Validate up front with an explicit, named error.
+    if not _is_pow2(block):
+        raise DenoiseError(
+            f"denoise: '{P_BLOCK}' must be a power of two, got {block}"
+        )
+    if not _is_pow2(max_match):
+        raise DenoiseError(
+            f"denoise: '{P_MAX_MATCH}' (N2 group size) must be a power of two, "
+            f"got {max_match}"
+        )
+
     ny, nx = noisy.shape
     if ny < block or nx < block:
         return noisy.copy()  # too small to group — pass through (EC-3 spirit)
 
+    # Masked pixel VALUES are replaced by a local valid-neighborhood estimate
+    # before block stacking so they cannot contaminate the spectrum of the groups
+    # they fall into (REQ-DENOISE-BM3D-2). Block-matching statistics already
+    # exclude masked pixels; the fill affects only the aggregated estimate.
+    filled = _fill_masked(noisy, valid, block)
+
     kaiser = _kaiser2d(block, beta)
-    windows = sliding_window_view(noisy, (block, block))
+    windows = sliding_window_view(filled, (block, block))
     valid_windows = sliding_window_view(valid, (block, block))
     positions = [
         (ry, rx)
@@ -374,13 +453,19 @@ def _bm3d(
     den = np.zeros((ny, nx), dtype=np.float64)
     for ry, rx in positions:
         coords = _match_group(
-            (ry, rx), noisy, windows, valid_windows, block, search, max_match, tau_hard
+            (ry, rx), filled, windows, valid_windows, block, search, max_match, tau_hard
         )
-        group = np.stack([noisy[y : y + block, x : x + block] for y, x in coords])
+        group = np.stack([filled[y : y + block, x : x + block] for y, x in coords])
         depth = _largest_pow2(group.shape[0])
         group = group[:depth]
         spec = _haar3d_forward(group)
+        # Hard-threshold every coefficient EXCEPT the DC (spec[0,0,0]): standard
+        # BM3D excludes the DC/mean from thresholding so the group mean survives.
+        # This also guarantees nnz >= 1, preventing a zero estimate from crushing
+        # dark low-count uniform regions (their mean is preserved).
+        dc = spec[0, 0, 0]
         spec = np.where(np.abs(spec) < thr, 0.0, spec)
+        spec[0, 0, 0] = dc
         nnz = int(np.count_nonzero(spec))
         estimate = _haar3d_inverse(spec)
         weight = 1.0 / max(nnz, 1)
@@ -399,7 +484,7 @@ def _bm3d(
         )
         depth = _largest_pow2(coords.shape[0])
         coords = coords[:depth]
-        noisy_group = np.stack([noisy[y : y + block, x : x + block] for y, x in coords])
+        noisy_group = np.stack([filled[y : y + block, x : x + block] for y, x in coords])
         basic_group = np.stack([basic[y : y + block, x : x + block] for y, x in coords])
         basic_spec = _haar3d_forward(basic_group)
         noisy_spec = _haar3d_forward(noisy_group)
@@ -417,10 +502,13 @@ def _bm3d(
 # -- NLM alternative path (SWR-704 [C], REQ-DENOISE-BM3D-4) --------------------
 
 
-def _nlm(noisy: np.ndarray, valid: np.ndarray, params: Params) -> np.ndarray:
+def _nlm(noisy: np.ndarray, valid: np.ndarray, params: Params, k_s: float) -> np.ndarray:
     """Non-local means denoiser (alternative path). Masked pixels excluded from
-    patch-similarity statistics (same mask-weighting contract as BM3D)."""
-    h = _require(params, P_NLM_H, float)
+    patch-similarity statistics (same mask-weighting contract as BM3D).
+
+    The filtering strength h is scaled by the preset k_s (SWR-705) so the NLM path
+    honours the strength presets monotonically, matching the BM3D sigma*k_s wiring."""
+    h = _require(params, P_NLM_H, float) * float(k_s)
     patch = _require(params, P_NLM_PATCH, int)
     window = _require(params, P_NLM_WINDOW, int)
     ny, nx = noisy.shape
@@ -471,7 +559,7 @@ def _denoise_transformed(
 ) -> np.ndarray:
     sigma_bm3d = 1.0 * k_s  # GAT stabilizes to unit variance; k_s scales strength
     if method == "nlm":
-        return _nlm(f, valid, params)
+        return _nlm(f, valid, params, k_s)
     if method == "bm3d":
         return _bm3d(f, valid, sigma_bm3d, params)
     raise DenoiseError(f"denoise: unknown method '{method}' (expected 'bm3d' or 'nlm')")
@@ -491,8 +579,21 @@ def _run(
     z = np.asarray(pixel, dtype=np.float64)
     f, clamp_rate = _gat_forward(z, alpha, sigma)
     valid = (masks_u8 & _EXCLUDE_MATCH) == 0
-    d = _denoise_transformed(f, valid, params, method, k_s)
     m_grid, lambda_grid = lut
+    # Refuse (rather than silently clamp/posterize highlights) when the inverse
+    # LUT domain does not cover the frame's actual GAT range on unmasked pixels
+    # (REQ-DENOISE-INV: np.interp clamps everything above M(lambda_max)).
+    if valid.any():
+        max_f = float(f[valid].max())
+        m_max = float(m_grid[-1])
+        if max_f > m_max:
+            raise DenoiseError(
+                f"denoise: inverse LUT domain too small — an unmasked pixel's GAT "
+                f"value {max_f:.6g} exceeds M(lambda_max)={m_max:.6g} "
+                f"(lambda_max={float(lambda_grid[-1]):.6g}); choose "
+                f"'{P_LUT_LAMBDA_MAX}' >= panel full-scale (no silent clamp)"
+            )
+    d = _denoise_transformed(f, valid, params, method, k_s)
     out = _gat_inverse(d, m_grid, lambda_grid)
     # Preserve saturated / saturation-band pixel values (no restoration).
     preserve = (masks_u8 & _PRESERVE_VALUE) != 0
@@ -509,6 +610,13 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
     """
     alpha, sigma = _resolve_noise(calib)
     method = str(params.get(P_METHOD, "bm3d"))
+    # Fail fast: validate that every required denoise parameter is present BEFORE
+    # any frame computation or LUT construction. When this stage runs as part of
+    # PipelineDefinition.full() without a complete denoise Params bundle, the
+    # failure is an explicit named DenoiseError at entry, not a cryptic mid-run
+    # crash (SPEC-DENOISE-001 decision 2; complements the orchestrator's
+    # CalibSet(NOISE) entry gate).
+    _require_present(params, _required_keys(method))
     k_s = _require(params, P_STRENGTH, float)
 
     # Build the exact unbiased inverse LUT once (shared by both buffers).

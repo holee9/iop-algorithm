@@ -41,6 +41,10 @@ EV = {
 
 # VST round-trip unbiasedness thresholds ([T]); external-injected.
 EPS_UNBIAS = 0.06  # normalized bias ceiling max_j bias(lambda_j)/max(lambda_j, floor)
+# End-to-end (full process(), BM3D active) patch-mean unbiasedness bound ([T]);
+# looser than the transform-domain exact-inverse property because it also folds
+# in the BM3D estimator variance/bias on a finite patch.
+EPS_UNBIAS_E2E = 0.12
 LAMBDA_FLOOR = 5.0  # low-count normalization floor (prevents lambda-division blowup)
 
 _BM3D_PARAMS = {
@@ -53,8 +57,10 @@ _BM3D_PARAMS = {
     "denoise_bm3d_kaiser_beta": 2.0,
     "denoise_bm3d_match_tau_hard": 2500.0,  # [T] grouping distance, stage 1
     "denoise_bm3d_match_tau_wiener": 2500.0,  # [T] grouping distance, stage 2
-    # exact unbiased inverse LUT construction [L]/[P].
-    "denoise_inv_lut_lambda_max": 6000.0,
+    # exact unbiased inverse LUT construction [L]/[P]. lambda_max covers the
+    # 16-bit panel full-scale so the inverse never silently clamps highlights
+    # (SPEC-DENOISE-001; quadratic node spacing keeps low-count accuracy).
+    "denoise_inv_lut_lambda_max": 65535.0,
     "denoise_inv_lut_nodes": 2048,
     "denoise_inv_lut_gh_nodes": 24,
 }

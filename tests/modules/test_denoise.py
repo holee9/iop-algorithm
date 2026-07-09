@@ -107,15 +107,22 @@ def test_scenario4_xframe_default_noise_not_used():
 
 
 def test_scenario5_no_asymptotic_inverse_path():
-    src = Path(inspect.getfile(denoise)).read_text(encoding="utf-8")
-    # The prohibited algebraic inverse ((alpha*f/2)^2 solved for z) must not exist
-    # as a module code path (REQ-DENOISE-INV-2). The only inverse is the LUT.
-    assert "asymptotic" not in src.lower() or "PROHIBITED" in src
+    # Structural guarantee (REQ-DENOISE-INV-2), not a docstring word-search: the
+    # module exposes EXACTLY ONE signal-domain (GAT) inverse entry point and it is
+    # LUT-based. No asymptotic/algebraic closed-form inverse function may exist.
+    gat_inverse_names = [n for n in dir(denoise) if "gat_inverse" in n.lower()]
+    assert gat_inverse_names == ["_gat_inverse"], gat_inverse_names
+    banned = [
+        n
+        for n in dir(denoise)
+        if any(b in n.lower() for b in ("asymptotic", "algebraic", "closed_form"))
+    ]
+    assert banned == [], banned
     assert not hasattr(denoise, "asymptotic_inverse")
-    assert hasattr(denoise, "_gat_inverse")
-    # The inverse is interpolation over the monotone forward-mean LUT.
+    # The single inverse is np.interp over the monotone forward-mean LUT arrays.
     inv_src = inspect.getsource(denoise._gat_inverse)
-    assert "interp" in inv_src
+    assert "np.interp" in inv_src
+    assert "m_grid" in inv_src and "lambda_grid" in inv_src
 
 
 def test_inverse_lut_is_monotone_and_deterministic():
@@ -200,6 +207,104 @@ def test_scenario9_nlm_path_selected_by_params():
 def test_unknown_method_rejected():
     with pytest.raises(denoise.DenoiseError, match="unknown method"):
         denoise.process(_frame(), noise_calib(SHAPE), _fast_params(method="wavelet"))
+
+
+def test_defect3_nlm_strength_scales_with_ks():
+    """Defect 3: the NLM path must honour k_s (h scaled by k_s), monotone: a
+    stronger preset smooths more (lower residual std) on a uniform field."""
+    frame, calib = _frame(), noise_calib(SHAPE)
+    # Small h so the h*k_s strength scaling is visible (the GAT domain is ~unit
+    # variance, so the default h=30 saturates the weights for every preset).
+    out06 = denoise.process(frame, calib, _fast_params(method="nlm", k_s=0.6, denoise_nlm_h=1.5))
+    out10 = denoise.process(frame, calib, _fast_params(method="nlm", k_s=1.0, denoise_nlm_h=1.5))
+    assert not np.allclose(out06.pixel, out10.pixel)  # k_s actually used
+    # Monotone smoothing: stronger preset -> smaller residual std on flat field.
+    assert out10.pixel.std() < out06.pixel.std()
+
+
+# -- Defect 1: inverse LUT domain coverage (no silent highlight clamp) ---------
+
+
+def test_defect1_bright_unmasked_pixel_above_lambda_max_errors():
+    """A bright unmasked pixel whose GAT value exceeds M(lambda_max) must raise an
+    explicit DenoiseError (old code silently clamped/posterized highlights)."""
+    _, noisy = make_uniform_field(SHAPE, level=400.0, seed=3)
+    noisy = noisy.copy()
+    noisy[10, 10] = 5.0e4  # bright highlight above a small LUT domain
+    frame = new_frame(noisy.astype(np.float32))
+    params = _fast_params(denoise_inv_lut_lambda_max=1000.0)  # deliberately too small
+    with pytest.raises(denoise.DenoiseError, match="lambda_max"):
+        denoise.process(frame, noise_calib(SHAPE), params)
+
+
+def test_defect1_full_scale_lambda_max_covers_highlight():
+    """With lambda_max at panel full-scale the same highlight is handled (no error,
+    finite output, highlight not posterized down to the old ceiling)."""
+    _, noisy = make_uniform_field(SHAPE, level=400.0, seed=3)
+    noisy = noisy.copy()
+    noisy[10, 10] = 5.0e4
+    frame = new_frame(noisy.astype(np.float32))
+    out = denoise.process(
+        frame, noise_calib(SHAPE), _fast_params(denoise_inv_lut_lambda_max=65535.0)
+    )
+    assert np.isfinite(out.pixel).all()
+    assert out.pixel[10, 10] > 1.0e4  # highlight preserved, not clamped to ~1000
+
+
+# -- Defect 6: non-power-of-two block -> named error --------------------------
+
+
+def test_defect6_non_power_of_two_block_rejected():
+    with pytest.raises(denoise.DenoiseError, match="denoise_bm3d_block"):
+        denoise.process(_frame(), noise_calib(SHAPE), _fast_params(denoise_bm3d_block=10))
+
+
+def test_defect6_non_power_of_two_max_match_rejected():
+    with pytest.raises(denoise.DenoiseError, match="denoise_bm3d_max_match"):
+        denoise.process(_frame(), noise_calib(SHAPE), _fast_params(denoise_bm3d_max_match=12))
+
+
+# -- Defect 4: dark low-count region mean preserved (DC not thresholded) -------
+
+
+def test_defect4_dark_uniform_region_mean_preserved():
+    """A dark, low-count uniform region must not be crushed to ~0: keeping the DC
+    coefficient guarantees the group mean survives hard thresholding."""
+    _, noisy = make_uniform_field(SHAPE, level=8.0, seed=4)  # dark / low count
+    frame = new_frame(noisy.astype(np.float32))
+    out = denoise.process(frame, noise_calib(SHAPE), _fast_params(k_s=1.0))
+    in_mean = float(np.mean(noisy))
+    out_mean = float(np.mean(np.asarray(out.pixel, dtype=np.float64)))
+    assert out_mean == pytest.approx(in_mean, rel=0.15), (in_mean, out_mean)
+    assert out_mean > 0.5 * in_mean  # not crushed toward zero
+
+
+# -- Defect 5: masked (saturated) values do not bleed into neighbors ----------
+
+
+def test_defect5_saturated_block_does_not_contaminate_neighbors():
+    """Extreme saturated pixel VALUES must be filled before block stacking so they
+    do not bleed into neighboring (valid) pixel estimates."""
+    _, base = make_uniform_field(SHAPE, level=400.0, seed=7)
+    contaminated = base.copy()
+    # A 4x4 block of extreme values marked SATURATION.
+    contaminated[20:24, 20:24] = 6.0e4
+    masks = np.zeros(SHAPE, np.uint8)
+    masks[20:24, 20:24] = int(MaskFlag.SATURATION)
+    frame_c = new_frame(contaminated.astype(np.float32), masks)
+    # Reference: same masked block but with in-range values under the mask.
+    clean_masked = base.copy()
+    frame_r = new_frame(clean_masked.astype(np.float32), masks)
+    params = _fast_params(denoise_inv_lut_lambda_max=65535.0)
+    out_c = np.asarray(denoise.process(frame_c, noise_calib(SHAPE), params).pixel, dtype=np.float64)
+    out_r = np.asarray(denoise.process(frame_r, noise_calib(SHAPE), params).pixel, dtype=np.float64)
+    # Neighboring valid pixels just outside the masked block must be essentially
+    # unaffected by the extreme masked values (fill prevents spectral bleed).
+    neigh = np.s_[18:26, 18:26]
+    nmask = np.ones((8, 8), bool)
+    nmask[2:6, 2:6] = False  # exclude the masked block itself
+    diff = np.abs(out_c[neigh] - out_r[neigh])[nmask]
+    assert float(diff.max()) <= 5.0, float(diff.max())  # [T] neighbor bound
 
 
 # -- Scenario 11 + EC-4: module contract --------------------------------------

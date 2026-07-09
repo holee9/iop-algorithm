@@ -48,6 +48,52 @@ def test_scenario10_recovers_known_alpha_sigma():
     assert abs(sigma - SIGMA) / SIGMA <= SIGMA_REL_TOL, sigma
 
 
+def _high_dose_zero_read_noise(seed=0, shape=(96, 96), n_frames=8):
+    """Dose levels with true read-noise sigma=0 at high dose only: the intercept
+    is unidentifiable and the OLS estimate lands slightly negative -> clamped."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for lvl in (3000.0, 6000.0, 9000.0, 12000.0):
+        out.append(
+            DoseLevel(
+                frames=np.stack(
+                    [sample_pg(np.full(shape, lvl), ALPHA, 0.0, rng) for _ in range(n_frames)]
+                )
+            )
+        )
+    return out
+
+
+def test_high_dose_only_clamp_records_provenance_warning():
+    """Defect 7: a small negative read-noise intercept is clamped to sigma=0 but
+    the clamp MUST be recorded in the CalibSet provenance note (not silent)."""
+    calib = fit_noise_model(
+        _high_dose_zero_read_noise(seed=0),
+        panel_id="PANEL-A",
+        resolution=(96, 96),
+        valid_from="2026-01-01",
+        valid_until="2027-01-01",
+    )
+    sigma = float(np.asarray(calib.data[K_NOISE_SIGMA]))
+    assert sigma == 0.0
+    note = calib.provenance.note
+    assert "WARNING" in note and "clamped to 0" in note, note
+
+
+def test_grossly_negative_intercept_still_refused():
+    """A negative intercept beyond the [T] tolerance remains an explicit error."""
+    with pytest.raises(NoiseModelCalibrationError, match="negative beyond tolerance"):
+        fit_noise_model(
+            _high_dose_zero_read_noise(seed=0),
+            panel_id="PANEL-A",
+            resolution=(96, 96),
+            valid_from="2026-01-01",
+            valid_until="2027-01-01",
+            sigma2_clamp_tol_frac=0.0,
+            sigma2_floor_tol=0.0,
+        )
+
+
 def test_single_dose_rejected():
     with pytest.raises(NoiseModelCalibrationError, match="2 dose"):
         fit_noise_model(
