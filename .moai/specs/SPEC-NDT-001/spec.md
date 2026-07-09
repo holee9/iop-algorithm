@@ -1,7 +1,7 @@
 ---
 id: SPEC-NDT-001
-version: 0.1.1
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-07-09
 updated: 2026-07-09
 author: drake.lee
@@ -24,6 +24,10 @@ XDET 영상처리 SW P1의 열 번째 작업 T9. NDT(비파괴검사) 검사 성
 - 구현 계획: [plan.md](./plan.md) · 인수 기준: [acceptance.md](./acceptance.md)
 
 ## HISTORY
+
+- **v0.2.0 (2026-07-09)** — 구현 완료(status: implemented). 커밋 fb6c4f0(WelfordAccumulator/SNRnAccumulator/correct_thickness/IQI 구현) + 리뷰 결함 8건 수정(과대 스케일 가드 실제 커널 크기 반영, 누적기 뮤테이션-전-검증 결함, IQI 범위 검사). 412 passed / 2 skipped(2회 동일), 계약 5건 KEPT. T0 표면(CANONICAL_ORDER/CalibKind) 무변경 확인(계약 테스트+lint-imports). 확정:
+  - XDET-TC-019 하드 게이트 재검증 결과: edge/MTF/SRb leg는 gaussian(각도 추정기 한계로 opening 부적합), defect/CSa leg는 SPEC 기본값 morphological_opening이 실제 통과 — 둘 다 실동작 게이트로 검증.
+  - 마스크(SATURATION/DEFECT) 미인식은 SPEC 범위 밖으로 판단(REQ 근거 없음, robust_stats median/MAD 이상치 저항으로 충분).
 
 - **v0.1.1 (2026-07-09)** — plan-audit iteration 1 (FAIL 0.55, D1 critical) 반영: D1(VALIDATE-3 EARS 비정형 서술 → shall절 재구성)·D2(VALIDATE-1 acceptance 미추적 → Scenario 4 태그 추가)·D4(THICK-1 이접 기법절 → Params `thickness_method` 선택으로 재구성, 기법 상세는 plan.md 이관)·D5(T1 인용 부정확 → 정확한 원문으로 정정). Ambiguity 1(두께 보정 출력 성격) 사용자 확인 완료 — **내부 측정 전용**(하류 표시 프레임 아님) 확정, 결정 1을 [확정 — RESOLVED]로 승격.
 - **v0.1.0 (2026-07-09)** — 초안 생성. GitHub 이슈 #10. 5개 요구 그룹(ACCUM/THICK/IQI/CONTRACT/VALIDATE) EARS 구조 확정. 핵심 범위 결정:

@@ -44,6 +44,17 @@ _DEFAULTS = {
     # -- NDT --
     "ndt_dip_threshold": 0.20,  # [P] ISO 20% dip
     "ndt_srb_norm_um": 88.6,  # [S] SNRn normalization constant
+    # -- NDT T9 (SPEC-NDT-001): streaming SNRn + IQI report + thickness --
+    "ndt_target_snrn": 130.0,  # [S]/[P] acquisition-termination target SNRn (ISO/customer)
+    "ndt_min_roi_pixels": 16,  # [P] minimum valid uniform pixels in an accumulation ROI
+    "ndt_thickness_method": "morphological_opening",  # [C] default low-freq estimator
+    "ndt_thickness_scale_px": 25,  # [T] low-freq profile scale (opening radius / Gaussian sigma)
+    "ndt_thickness_gradient_min_frac": 0.02,  # [T] gradient-presence threshold (range/mean)
+    "ndt_wire_visibility_threshold": 0.20,  # [T]/[P] single-wire visibility contrast
+    "ndt_class_a_snrn_min": 100.0,  # [S]/[P] ISO 17636-2 Class A SNRn minimum (report input)
+    "ndt_class_a_required_wire": 12,  # [S]/[P] Class A required (finest) wire number
+    "ndt_class_b_snrn_min": 130.0,  # [S]/[P] Class B SNRn minimum (more demanding)
+    "ndt_class_b_required_wire": 13,  # [S]/[P] Class B required wire number
     # -- metadata pass-through --
     "beam_quality": "RQA5",
     "added_filter": "Al 21mm",
@@ -61,6 +72,21 @@ TOLERANCES = {
     "lag_rel": 1e-6,
     "ghost_cnr_rel": 0.20,
     "snrn_rel": 0.10,
+    # -- NDT T9 --
+    "welford_atol": 1e-6,  # Welford-online vs temporal_mean_std batch equivalence
+    "welford_rtol": 1e-9,
+    "snrn_progression_rel": 0.15,  # streaming SNRn vs sqrt(k) known progression
+    "thickness_defect_rel": 0.10,  # high-freq defect amplitude preservation
+}
+
+# External EV pass/fail thresholds (EVAL v1.1). These are INJECTED into the TC
+# gates from outside the engine (measurement != judgment, REQ-NDT-CONTRACT-4);
+# the metrics engine never embeds them. Mirrors the denoise EV-dict pattern.
+EV_NDT = {
+    "ev301_snrn_class_a_min": 100.0,  # SNRn Class A minimum (EV-301 min pass line)
+    "ev102_mtf_retention_min": 0.90,  # MTF@Nyquist retention after correction
+    "ev102_srb_degrade_max_frac": 0.10,  # SRb degradation cap after correction
+    "ev303_csa_max_frac": 0.02,  # achieved contrast sensitivity (CSa) proxy cap
 }
 
 

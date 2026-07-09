@@ -13,7 +13,7 @@ import numpy as np
 from scipy.special import erf
 
 from common.xframe import new_frame
-from metrics.ndt import WirePair
+from metrics.ndt import WireElement, WirePair
 
 # ---------------------------------------------------------------------------
 # MTF: ideal slanted edge with a known Gaussian blur -> analytic MTF.
@@ -353,3 +353,231 @@ def make_uniform_snr_frame(
     frame = new_frame(img.astype(np.float32))
     roi = (16, 16, 96, 96)
     return UniformPhantom(frame, roi, known_snr=mean / sigma, mean=mean, sigma=sigma)
+
+
+# ---------------------------------------------------------------------------
+# NDT T9 (SPEC-NDT-001): Welford streaming sequence, real-time SNRn sequence,
+# single-wire IQI profile, thickness step-wedge (edge + gradient + defect).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WelfordPhantom:
+    """Frame sequence + the full stack for the batch reference."""
+
+    frames: list  # list of 2D float64 arrays fed one-by-one to the accumulator
+    stack: np.ndarray  # (n_frames, Ny, Nx) for temporal_mean_std batch reference
+
+
+def make_welford_sequence(
+    shape: tuple[int, int] = (16, 24),
+    mean: float = 1500.0,
+    sigma: float = 25.0,
+    n_frames: int = 12,
+    seed: int = 7,
+) -> WelfordPhantom:
+    """Independent noisy frames; the accumulator must match the batch stack.
+
+    Returns the per-frame 2D arrays (streamed one at a time, whole stack never
+    held by the accumulator) and the full stack for the batch reference
+    (``temporal_mean_std``). float64 so the equivalence is a pure numerics gate.
+    """
+    rng = np.random.default_rng(seed)
+    stack = mean + rng.normal(0.0, sigma, size=(n_frames,) + shape)
+    frames = [stack[i].copy() for i in range(n_frames)]
+    return WelfordPhantom(frames, stack)
+
+
+@dataclass(frozen=True)
+class SnrnSeqPhantom:
+    frames: list  # XFrames of a uniform ROI region, streamed one at a time
+    roi: tuple[int, int, int, int]
+    known_snr1: float  # single-frame SNR = mean / sigma
+    srb_um: float  # known SRb for the SNRn normalization
+    mean: float
+    sigma: float
+    n_frames: int
+
+    def known_snr(self, k: int) -> float:
+        """Averaging k independent frames reduces noise by sqrt(k)."""
+        return self.known_snr1 * float(np.sqrt(k))
+
+    def known_snrn(self, k: int, norm_um: float = 88.6) -> float:
+        return self.known_snr(k) * norm_um / self.srb_um
+
+
+def make_snrn_sequence(
+    shape: tuple[int, int] = (112, 112),
+    mean: float = 2000.0,
+    sigma: float = 25.0,
+    n_frames: int = 16,
+    srb_um: float = 150.0,
+    seed: int = 11,
+) -> SnrnSeqPhantom:
+    """Sequence of independent uniform frames -> known SNR(k) = (mean/sigma)*sqrt(k).
+
+    As the accumulator averages more frames the temporal noise drops as
+    1/sqrt(k), so the running spatial SNR grows as sqrt(k) — an analytic known
+    progression the streaming SNRn must reproduce.
+    """
+    rng = np.random.default_rng(seed)
+    frames = [
+        new_frame((mean + rng.normal(0.0, sigma, size=shape)).astype(np.float32))
+        for _ in range(n_frames)
+    ]
+    roi = (8, 8, 96, 96)
+    return SnrnSeqPhantom(
+        frames, roi, known_snr1=mean / sigma, srb_um=srb_um, mean=mean, sigma=sigma,
+        n_frames=n_frames,
+    )
+
+
+@dataclass(frozen=True)
+class SingleWirePhantom:
+    profile: np.ndarray
+    wires: list  # WireElement(number, index)
+    known_min_visible_wire: int  # finest (highest-numbered) still-visible wire
+    visibility_threshold: float
+
+
+def make_single_wire_iqi(
+    background: float = 1000.0,
+    visibility_threshold: float = 0.20,
+) -> SingleWirePhantom:
+    """Single-wire (ISO 19232 wire-type) IQI: dips of decreasing contrast.
+
+    Wires 10..16 have contrasts 0.50..0.03. At the 0.20 visibility threshold
+    wires 10,11,12,13 are visible (contrast >= 0.20) and 14,15,16 are not, so
+    the finest visible wire is 13.
+    """
+    n = 220
+    profile = np.full(n, background, dtype=np.float64)
+    # (wire number, sample index, dip contrast)
+    specs = [
+        (10, 20, 0.50),
+        (11, 50, 0.40),
+        (12, 80, 0.30),
+        (13, 110, 0.22),
+        (14, 140, 0.12),
+        (15, 170, 0.06),
+        (16, 200, 0.03),
+    ]
+    wires = []
+    for number, index, contrast in specs:
+        profile[index] = background * (1.0 - contrast)
+        wires.append(WireElement(number=number, index=index))
+    visible = [num for num, _, c in specs if c >= visibility_threshold]
+    return SingleWirePhantom(
+        profile, wires, known_min_visible_wire=max(visible),
+        visibility_threshold=visibility_threshold,
+    )
+
+
+@dataclass(frozen=True)
+class ThicknessEdgePhantom:
+    """Edge on a smooth thickness gradient — for MTF@Nyquist / SRb protection."""
+
+    frame: object  # XFrame (edge + cosine gradient + noise)
+    band: tuple  # (row slice, col slice) narrow cross-edge ROI for MTF
+    pitch_mm: float
+
+
+def make_thickness_edge_phantom(
+    shape: tuple[int, int] = (128, 128),
+    angle_deg: float = 2.0,
+    sigma_px: float = 0.6,
+    low: float = 2000.0,
+    high: float = 6000.0,
+    grad_amp: float = 3000.0,
+    noise_sigma: float = 4.0,
+    pitch_mm: float = 0.14,
+    seed: int = 19,
+) -> ThicknessEdgePhantom:
+    """Near-vertical edge + smooth (cosine) low-frequency thickness gradient.
+
+    The gradient varies only along y (orthogonal to the near-vertical edge). A
+    large-scale low-pass subtraction must flatten the gradient while preserving
+    the edge's high-frequency transition (measured on the narrow cross-edge
+    band).
+    """
+    ny, nx = shape
+    slope = np.tan(np.radians(angle_deg))
+    ys, xs = np.mgrid[0:ny, 0:nx].astype(np.float64)
+    dist = (xs - (nx * 0.5 + slope * ys)) * np.cos(np.arctan(slope))
+    edge = low + (high - low) * 0.5 * (1.0 + erf(dist / (sigma_px * np.sqrt(2.0))))
+    grad = grad_amp * (0.5 - 0.5 * np.cos(np.pi * ys / (ny - 1)))
+    rng = np.random.default_rng(seed)
+    img = edge + grad + rng.normal(0.0, noise_sigma, size=shape)
+    band = (slice(16, 112), slice(52, 76))
+    return ThicknessEdgePhantom(new_frame(img.astype(np.float32)), band, pitch_mm)
+
+
+@dataclass(frozen=True)
+class ThicknessDefectPhantom:
+    """Linear thickness ramp + injected high-frequency defect + noise."""
+
+    frame: object  # XFrame
+    defect_center: tuple[int, int]
+    known_defect_amp: float
+    flat_roi: tuple  # (row slice, col slice) defect-free flat region (CSa)
+    signal_level: float  # known signal level in the flat region (CSa denominator)
+
+    def defect_amplitude(self, image: np.ndarray) -> float:
+        r, c = self.defect_center
+        patch = image[r - 4 : r + 5, c - 4 : c + 5]
+        base = np.median(
+            np.concatenate(
+                [
+                    image[r - 4 : r + 5, c - 8 : c - 4].ravel(),
+                    image[r - 4 : r + 5, c + 5 : c + 9].ravel(),
+                ]
+            )
+        )
+        return float(patch.max() - base)
+
+
+def make_thickness_defect_phantom(
+    shape: tuple[int, int] = (128, 128),
+    base: float = 2000.0,
+    grad_amp: float = 3000.0,
+    defect_amp: float = 300.0,
+    defect_sigma_px: float = 0.9,
+    noise_sigma: float = 4.0,
+    seed: int = 23,
+) -> ThicknessDefectPhantom:
+    """Linear vertical thickness ramp with a small high-frequency defect bump.
+
+    A linear ramp has zero curvature, so a low-pass estimate removes it down to
+    the noise floor in the interior — giving a clean CSa (residual-noise/signal)
+    proxy — while the tight defect bump (high frequency) survives.
+    """
+    ny, nx = shape
+    ys, xs = np.mgrid[0:ny, 0:nx].astype(np.float64)
+    grad = base + grad_amp * (ys / (ny - 1))
+    dr, dc = 64, 96
+    defect = defect_amp * np.exp(
+        -(((ys - dr) ** 2 + (xs - dc) ** 2) / (2.0 * defect_sigma_px**2))
+    )
+    rng = np.random.default_rng(seed)
+    img = grad + defect + rng.normal(0.0, noise_sigma, size=shape)
+    flat_roi = (slice(40, 88), slice(30, 66))
+    signal_level = float(np.median(grad[flat_roi]))
+    return ThicknessDefectPhantom(
+        new_frame(img.astype(np.float32)),
+        defect_center=(dr, dc),
+        known_defect_amp=defect_amp,
+        flat_roi=flat_roi,
+        signal_level=signal_level,
+    )
+
+
+def make_flat_frame(
+    shape: tuple[int, int] = (128, 128),
+    level: float = 3000.0,
+    noise_sigma: float = 4.0,
+    seed: int = 31,
+) -> object:
+    """Gradient-free uniform frame (EC-2: no low-frequency gradient present)."""
+    rng = np.random.default_rng(seed)
+    img = level + rng.normal(0.0, noise_sigma, size=shape)
+    return new_frame(img.astype(np.float32))
