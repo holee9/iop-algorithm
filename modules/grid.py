@@ -151,20 +151,61 @@ def _find_peaks(
     if not np.any(band):
         return [], 0.0
     win = max(3, int(bg_window) | 1)  # odd, >= 3
-    bg = median_filter(psd, size=win, mode="nearest")
+    # `mirror` (reflect excluding the edge sample) keeps the rolling-median
+    # background from replicating a peak that sits ON the Nyquist edge into its own
+    # background window -- with edge replication a grid peak at exactly f_N inflates
+    # its own background and its significance collapses to 0 (never detected).
+    bg = median_filter(psd, size=win, mode="mirror")
     floor = max(float(np.median(psd[band])) * 1e-6, 1e-30)
     bg = np.maximum(bg, floor)
     sig = 10.0 * np.log10(np.maximum(psd, 1e-30) / bg)
 
+    n = psd.size
+    last = n - 1
     idx = np.nonzero(band)[0]
     candidates: list[Peak] = []
     for i in idx:
-        if i <= 0 or i >= psd.size - 1:
+        if i <= 0:
             continue
-        if psd[i] > psd[i - 1] and psd[i] >= psd[i + 1] and sig[i] >= d_th:
+        if i >= last:
+            # The Nyquist (last) bin has no right neighbour; treat it as a local
+            # maximum when it strictly exceeds its single left neighbour so a grid
+            # peak landing exactly at Nyquist is not silently dropped.
+            is_local_max = psd[i] > psd[i - 1]
+        else:
+            is_local_max = psd[i] > psd[i - 1] and psd[i] >= psd[i + 1]
+        if is_local_max and sig[i] >= d_th:
             candidates.append(
                 Peak(float(freq[i]), float(sig[i]), _fwhm(freq, psd, i, float(bg[i])))
             )
+
+    df = float(freq[1] - freq[0]) if freq.size > 1 else 0.0
+    min_sep = 2.5 * df
+
+    # Explicit folded-harmonic candidates (SWR-1002 / EC-3): for each detected
+    # fundamental and k = 2..max_order, the folded harmonic fold(k*f) can land on
+    # the shoulder of a stronger neighbouring bin -- elevated above the local
+    # background yet not a strict local maximum, so the search above misses it.
+    # Check fold(k*f) significance directly against D_th and add it as a candidate
+    # when it clears the threshold (not requiring a local maximum).
+    if candidates:
+        f_s = 2.0 * f_nyq
+        existing = [c.freq_lpmm for c in candidates]
+        base_freqs = [c.freq_lpmm for c in candidates]
+        for f0 in base_freqs:
+            for k in range(2, max(2, int(max_peaks)) + 1):
+                f_h = _fold(k * f0, f_s, f_nyq)
+                if f_h < lo or f_h > f_nyq:
+                    continue
+                j = int(np.argmin(np.abs(freq - f_h)))
+                if not band[j] or sig[j] < d_th:
+                    continue
+                if any(abs(freq[j] - e) <= min_sep for e in existing):
+                    continue
+                candidates.append(
+                    Peak(float(freq[j]), float(sig[j]), _fwhm(freq, psd, j, float(bg[j])))
+                )
+                existing.append(float(freq[j]))
 
     if not candidates:
         return [], float(np.max(sig[band]))
@@ -172,8 +213,6 @@ def _find_peaks(
     # Greedy dedupe: sort by significance, keep peaks separated by > ~2 bins so a
     # single broad peak is not double-counted; cap at max_peaks (SWR-1002
     # harmonic max order bounds the reported set).
-    df = float(freq[1] - freq[0]) if freq.size > 1 else 0.0
-    min_sep = 2.5 * df
     candidates.sort(key=lambda p: p.significance_db, reverse=True)
     kept: list[Peak] = []
     for cand in candidates:
@@ -206,19 +245,67 @@ def analyze(image, params: Params) -> GridAnalysis:
     peaks_x, sig_x = _find_peaks(freq_x, psd_x, lo, f_nyq, d_th, max_order, bg_window)
     peaks_y, sig_y = _find_peaks(freq_y, psd_y, lo, f_nyq, d_th, max_order, bg_window)
 
-    if sig_x >= sig_y:
-        direction, peaks, best, other = "vertical", peaks_x, sig_x, sig_y
+    # Direction selection compares ONLY axes where a peak was actually found. A
+    # peakless axis reports its in-band noise-floor maximum as its "significance";
+    # that noise floor must never outrank a genuine peak on the other axis.
+    if peaks_x and peaks_y:
+        # Both axes carry real peaks -> crossed/diagonal ambiguity. Pick the
+        # stronger axis, but require it to lead the other by the direction margin
+        # (ambiguous grids fall through to passthrough, EC-2).
+        if sig_x >= sig_y:
+            direction, peaks, best, other = "vertical", peaks_x, sig_x, sig_y
+        else:
+            direction, peaks, best, other = "horizontal", peaks_y, sig_y, sig_x
+        energy_ratio_db = float(best - other)
+        detected = best >= d_th and energy_ratio_db >= margin
+    elif peaks_x or peaks_y:
+        # Only one axis has a real peak -> unambiguous grid direction; the
+        # peakless axis's noise floor is not a competing peak.
+        if peaks_x:
+            direction, peaks, best, other = "vertical", peaks_x, sig_x, sig_y
+        else:
+            direction, peaks, best, other = "horizontal", peaks_y, sig_y, sig_x
+        energy_ratio_db = float(best - other)
+        detected = best >= d_th
     else:
-        direction, peaks, best, other = "horizontal", peaks_y, sig_y, sig_x
-    energy_ratio_db = float(best - other)
+        # Neither axis has a peak -> no detection.
+        return GridAnalysis(False, "none", 0.0, ())
 
-    # Confident detection requires the winning axis to clear D_th AND to lead the
-    # orthogonal axis by the direction margin (ambiguous crossed/diagonal grids
-    # fall through to passthrough, EC-2).
-    detected = bool(peaks) and best >= d_th and energy_ratio_db >= margin
     if not detected:
         return GridAnalysis(False, "none", energy_ratio_db, ())
     return GridAnalysis(True, direction, energy_ratio_db, tuple(peaks))
+
+
+def _gaussian_notch_gain(
+    f: np.ndarray,
+    peaks: tuple[Peak, ...],
+    fwhm_mult: float,
+    moire_cutoff: float,
+    atten_cap: float,
+) -> tuple[np.ndarray, bool]:
+    """Single source of truth for the multiplicative Gaussian notch gain.
+
+    Each peak contributes a Gaussian notch summing TWO terms at +/-f_peak (the
+    real-signal spectral symmetry the applied notch requires). Peaks folding below
+    the moire cutoff have their attenuation capped (SWR-1004). Returns
+    (gain, capped). Both the analytic proxy `notch_gain_1d` and the applied notch
+    `_notch_axis_gain` delegate here so the two can never diverge (EV-102 gate).
+    """
+    f = np.asarray(f, dtype=np.float64)
+    gain = np.ones_like(f)
+    capped = False
+    for pk in peaks:
+        atten = 1.0
+        if pk.freq_lpmm < moire_cutoff:
+            atten = min(1.0, atten_cap)
+            capped = True
+        sigma = max(pk.fwhm_lpmm * fwhm_mult, 1e-6) / _2SQRT2LN2
+        notch = atten * (
+            np.exp(-((f - pk.freq_lpmm) ** 2) / (2.0 * sigma * sigma))
+            + np.exp(-((f + pk.freq_lpmm) ** 2) / (2.0 * sigma * sigma))
+        )
+        gain = gain * (1.0 - np.minimum(notch, atten))
+    return gain, capped
 
 
 def notch_gain_1d(
@@ -233,17 +320,18 @@ def notch_gain_1d(
     retention the notch imposes -- free of the Gibbs-ringing artifact a slanted-
     edge re-estimation of a notched hard edge would introduce (EV-102 guardrail,
     REQ-GRID-VALIDATE-2). Consumed by tests alongside metrics.mtf for the baseline.
+
+    Delegates to `_gaussian_notch_gain` so this proxy is bit-for-bit identical to
+    the notch actually applied in `_notch_axis_gain` (both sum the +/-f_peak mirror
+    terms); a single-term approximation would under-report the attenuation a
+    low-frequency wide-bandwidth peak imposes at +Nyquist.
     """
     fwhm_mult = _require(params, P_NOTCH_FWHM_MULT, float)
     moire_cutoff = _require(params, P_MOIRE_CUTOFF, float)
     atten_cap = _require(params, P_MOIRE_ATTEN_CAP, float)
-    f = np.asarray(freqs_lpmm, dtype=np.float64)
-    gain = np.ones_like(f)
-    for pk in peaks:
-        atten = min(1.0, atten_cap) if pk.freq_lpmm < moire_cutoff else 1.0
-        sigma = max(pk.fwhm_lpmm * fwhm_mult, 1e-6) / _2SQRT2LN2
-        notch = atten * np.exp(-((np.abs(f) - pk.freq_lpmm) ** 2) / (2.0 * sigma * sigma))
-        gain *= 1.0 - np.minimum(notch, atten)
+    gain, _ = _gaussian_notch_gain(
+        np.asarray(freqs_lpmm, dtype=np.float64), peaks, fwhm_mult, moire_cutoff, atten_cap
+    )
     return gain
 
 
@@ -261,20 +349,7 @@ def _notch_axis_gain(
     moire cutoff have their attenuation capped (SWR-1004). Returns (gain, capped).
     """
     f = np.fft.fftfreq(n, d=pitch)
-    gain = np.ones(n, dtype=np.float64)
-    capped = False
-    for pk in peaks:
-        atten = 1.0
-        if pk.freq_lpmm < moire_cutoff:
-            atten = min(1.0, atten_cap)
-            capped = True
-        sigma = max(pk.fwhm_lpmm * fwhm_mult, 1e-6) / _2SQRT2LN2
-        notch = atten * (
-            np.exp(-((f - pk.freq_lpmm) ** 2) / (2.0 * sigma * sigma))
-            + np.exp(-((f + pk.freq_lpmm) ** 2) / (2.0 * sigma * sigma))
-        )
-        gain *= 1.0 - np.minimum(notch, atten)
-    return gain, capped
+    return _gaussian_notch_gain(f, peaks, fwhm_mult, moire_cutoff, atten_cap)
 
 
 def _apply_notch(

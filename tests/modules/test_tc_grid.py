@@ -79,13 +79,18 @@ def test_tc015_residual_peak_below_significance(name, f_grid):
     frame = make_frame(img)
     out = grid.process(frame, other_calib((128, 128)), grid_params())
     after = grid.analyze(np.asarray(out.pixel), grid_params())
-    # The suppressed frequency must not carry a significant residual peak.
+    # Hard-DoD (unconditional): the suppressed frequency must not carry a
+    # significant residual peak in EITHER outcome. If analyze() reports
+    # detected=False the peaks tuple is empty and `residual` is empty, so the
+    # targeted grid line is invisible (DoD met). If detected=True (partial
+    # suppression), any residual peak at the suppressed frequency must still clear
+    # the significance bar. `all([])` is True, so the success case passes and a
+    # broken notch (peak persists) fails -- the assertion is never a silent no-op.
     expected = fold_frequency(f_grid)
     residual = [p for p in after.peaks if abs(p.freq_lpmm - expected) < 0.15]
-    if residual:
-        assert max(p.significance_db for p in residual) < EV["residual_db"], (
-            f"{name}: residual grid line still visible"
-        )
+    assert all(p.significance_db < EV["residual_db"] for p in residual), (
+        f"{name}: residual grid line still visible"
+    )
 
 
 # -- TC-015 (c): grid-orthogonal MTF@Nyquist retention guardrail (EV-102) -------
