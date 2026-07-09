@@ -55,7 +55,10 @@ _SKELETONS = [
     # therefore removed from this deferred list. TC-016 is a T7 PARTIAL gate (the
     # low-frequency-fold residual under the attenuation cap and the observer
     # "invisible" study are licensing-deferred, spec decision 3).
-    ("XDET-TC-017", "kernel virtual grid / SKS (T8/WP9)"),
+    # TC-017 (kernel virtual grid / SKS scatter correction CNR improvement, hard
+    # DoD) is the T8/WP9 release gate; it is now LIVE in
+    # tests/modules/test_tc_virtual_grid.py and therefore removed from this
+    # deferred list.
     ("XDET-TC-018", "NDT SNRn + IQI auto-read on weld specimens vs EV-301 (T9/WP10)"),
     ("XDET-TC-019", "NDT thickness correction (T9/WP10)"),
     ("XDET-TC-020", "tier gating structure (T10)"),

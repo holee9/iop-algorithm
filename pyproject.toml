@@ -78,6 +78,7 @@ modules = [
     "modules.saturation",
     "modules.geometry",
     "modules.grid",
+    "modules.virtual_grid",
     "modules.denoise",
     "modules.mse",
     "modules.window",

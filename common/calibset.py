@@ -36,6 +36,13 @@ class CalibKind(str, Enum):
     # orchestrator entry gate enforce kind-vs-stage wiring for denoise, which
     # structurally blocks unauthorized default substitution (SWR-000-5).
     NOISE = "noise"
+    # Scatter kernel (dual-Gaussian PSF) for the T8 virtual_grid stage
+    # (SPEC-VGRID-001 decision 2, SWR-000-10 "scatter 커널"). A dedicated kind —
+    # rather than reusing OTHER — lets the orchestrator entry gate enforce
+    # kind-vs-stage wiring for virtual_grid, which structurally blocks
+    # unauthorized default-kernel substitution (SWR-000-5). Distinct from T7
+    # grid, which has no detector calibration and uses CalibSet(OTHER).
+    SCATTER = "scatter"
     OTHER = "other"
 
 
@@ -53,6 +60,21 @@ LAG_PAYLOAD_KEYS: tuple[str, ...] = (K_IRF_A, K_IRF_B)
 K_NOISE_ALPHA = "alpha"  # () gain slope alpha (>0)
 K_NOISE_SIGMA = "sigma"  # () read-noise sigma (>=0)
 NOISE_PAYLOAD_KEYS: tuple[str, ...] = (K_NOISE_ALPHA, K_NOISE_SIGMA)
+
+# CalibSet(kind=SCATTER) data payload keys: the dual-Gaussian scatter PSF
+# K(r) = amp[0]*Gauss(sigma[0]) + amp[1]*Gauss(sigma[1]), applied in the
+# x8-downsampled SKS domain ([B], SWR-1101). The Gaussian sigmas are expressed in
+# DOWNSAMPLED pixels (the SKS estimation domain). The amplitudes are the
+# scatter-to-primary weights; their sum is the DC scatter-to-primary ratio (SPR)
+# and MUST be < 1 for the SKS fixed-point iteration to converge (spectral radius
+# < 1, SWR-1101 high-SPR robustness). Single source of truth shared by the
+# producer (metrics.scatter_kernel) and the consumer (modules.virtual_grid) so
+# the two never drift on the key literals (NOISE_PAYLOAD_KEYS precedent). The
+# thickness/kV dependence that shapes (amp, sigma) is resolved offline by the
+# builder; the exact multi-thickness schema is [B]-deferred to real measurement.
+K_SCATTER_AMP = "scatter_amp"  # (2,) dual-Gaussian amplitudes (SPR weights, > 0)
+K_SCATTER_SIGMA = "scatter_sigma"  # (2,) dual-Gaussian sigmas in downsampled px (> 0)
+SCATTER_PAYLOAD_KEYS: tuple[str, ...] = (K_SCATTER_AMP, K_SCATTER_SIGMA)
 
 
 @dataclass(frozen=True)

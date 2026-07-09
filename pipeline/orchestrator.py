@@ -9,7 +9,7 @@ calibration-refusal gate are safety-critical invariants (SWR-000-5).
 
 Order (REQ-INFRA-ORCH-3):
     offset -> gain -> defect -> lag -> line_noise -> saturation -> geometry
-        -> denoise -> mse -> window -> post
+        -> grid -> virtual_grid -> denoise -> mse -> window -> post
 
 Entry gate (REQ-INFRA-ORCH-4): a missing or mismatched CalibSet (resolution /
 panel_id) causes refusal with an explicit error. Defaults are NEVER substituted
@@ -46,6 +46,20 @@ CANONICAL_ORDER: tuple[str, ...] = (
     # _KIND_BY_STAGE: grid has no detector calibration and satisfies the entry
     # gate with CalibSet(OTHER), an empty placeholder (decision 2).
     "grid",
+    # Dedicated kernel virtual-grid (SKS scatter correction) stage between grid
+    # and denoise (SPEC-VGRID-001 decision 1). Placed AFTER grid (the physical
+    # grid-line and virtual-grid stages are mutually exclusive by acquisition
+    # context; the grid -> virtual_grid relative order covers the residual
+    # scatter of a low-ratio physical grid) and BEFORE denoise (the low-signal
+    # noise boost of scatter subtraction is cleaned up by the subsequent BM3D,
+    # and scatter is a low-frequency signal correction) and mse (which would
+    # otherwise amplify a residual scatter gradient as contrast, WP6). Registered
+    # stages are a subsequence of CANONICAL_ORDER, so inserting this stage is
+    # backward-compatible with pipelines that do not register it (SPEC-GRID-001 /
+    # SPEC-DENOISE-001 precedent). Unlike grid, virtual_grid HAS a real detector
+    # calibration (the measured scatter kernel), so it IS wired in _KIND_BY_STAGE
+    # to CalibSet(SCATTER) (decision 2).
+    "virtual_grid",
     # Dedicated VST+BM3D denoise stage between geometry and post
     # (SPEC-DENOISE-001 decision 1). Registered stages are a subsequence of
     # CANONICAL_ORDER, so inserting a stage is backward-compatible with pipelines
@@ -109,6 +123,8 @@ class PipelineDefinition:
         stage: the entry gate demands a matching CalibSet per stage and each module
         demands its externalized Params bundle. Concretely a caller must supply:
           - CalibSet(NOISE) for the denoise stage (T5, kind-vs-stage enforced);
+          - CalibSet(SCATTER) for the virtual_grid stage (T8, kind-vs-stage
+            enforced) — the dual-Gaussian scatter kernel;
           - a matching-kind CalibSet for each detector-calibrated stage
             (offset/gain/defect/lag/line_noise);
           - a resolution-/panel_id-matching CalibSet(OTHER) placeholder for the
@@ -139,6 +155,10 @@ _KIND_BY_STAGE: dict[str, str] = {
     # (SPEC-DENOISE-001 decision 2/5). Kind-vs-stage enforcement blocks default
     # substitution of the noise model at the entry gate.
     "denoise": "noise",
+    # virtual_grid stage consumes CalibSet(SCATTER) — the dual-Gaussian scatter
+    # kernel (SPEC-VGRID-001 decision 2). Kind-vs-stage enforcement blocks
+    # default substitution of the scatter kernel at the entry gate (SWR-000-5).
+    "virtual_grid": "scatter",
 }
 
 

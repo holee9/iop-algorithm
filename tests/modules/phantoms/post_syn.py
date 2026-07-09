@@ -74,6 +74,7 @@ def full_calib_map(
         "lag": CalibKind.LAG,
         "line_noise": CalibKind.LINE_NOISE,
         "denoise": CalibKind.NOISE,
+        "virtual_grid": CalibKind.SCATTER,
     }
     out: dict = {}
     for stage in CANONICAL_ORDER:
