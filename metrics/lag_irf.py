@@ -1,0 +1,177 @@
+"""IRF fitting tool: multi-exposure step-response -> CalibSet(LAG) (SWR-401).
+
+Offline calibration builder (spec decision 5, metrics.defect_map precedent). It
+fits the exponential-sum lag IRF h[n] = sum_i a_i * b_i**n (M = 3..4, [L]) from
+rising/falling step-response afterglow curves acquired at MULTIPLE exposure
+levels (saturation 2..90% multi-point) and emits a CalibSet(kind=LAG) whose
+data payload feeds modules.lag.
+
+Fitting model (LTI): the afterglow residual after a step of amplitude A is, per
+the SWR-402 state recursion, residual[m] = A * sum_i a_i * b_i**m (m = 1..N).
+Normalizing each exposure by its amplitude, all levels must collapse onto the
+same exponential-sum curve (LTI premise); the tool fits (a_i, b_i) jointly over
+the stacked normalized residuals.
+
+- REQ-LAG-IRF-2: a SINGLE-exposure calibration is rejected (IRF is sensitive to
+  measurement technique / exposure level, [L]); >= 2 exposures are required.
+- REQ-LAG-IRF-3: while real step-response is measurement-pending [B], a known
+  synthetic IRF must be recovered within a [T] tolerance.
+
+Layering stays metrics -> common (the produced CalibSet lives in common); the
+correction module modules.lag never imports metrics.
+
+Accuracy is the single goal; no speed optimization (P2).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+from scipy.optimize import least_squares
+
+from common.calibset import K_IRF_A, K_IRF_B, CalibKind, CalibProvenance, CalibSet
+
+# CalibSet(LAG) payload keys: re-exported from common.calibset (single source of
+# truth shared with modules.lag), so producer and consumer never drift.
+__all__ = ["K_IRF_A", "K_IRF_B", "StepResponse", "LagIRFCalibrationError", "fit_lag_irf"]
+
+# Default relative-RMS residual acceptance threshold [T]: the fit's residual RMS
+# normalized by the target RMS must fall below this, else the fit is rejected as
+# a failed calibration. Externalized as a fit_lag_irf argument (no hardcoding).
+DEFAULT_RMS_RESIDUAL_TOL = 0.05
+
+
+class LagIRFCalibrationError(ValueError):
+    """Raised on an invalid IRF calibration request (e.g. single exposure)."""
+
+
+@dataclass(frozen=True)
+class StepResponse:
+    """One exposure level's falling-edge afterglow residual.
+
+    amplitude: the exposed-step amplitude A (above baseline).
+    residual:  residual signal at m = 1..N after the step ends (baseline
+               removed), i.e. A * sum_i a_i * b_i**m plus measurement noise.
+    """
+
+    amplitude: float
+    residual: np.ndarray
+
+
+def _model(theta: np.ndarray, m: np.ndarray, m_terms: int) -> np.ndarray:
+    a = theta[:m_terms][:, None]
+    b = theta[m_terms:][:, None]
+    return (a * b ** m[None, :]).sum(axis=0)
+
+
+# @MX:ANCHOR: [AUTO] sole IRF producer feeding modules.lag via CalibSet(LAG).
+# @MX:REASON: fan_in spans the synthetic-recovery gate (REQ-LAG-IRF-3), the
+# single-exposure rejection (EC-2), and the fit -> correct round-trip test; the
+# (irf_a, irf_b) payload schema and the >=2-exposure premise are contractual.
+def fit_lag_irf(
+    step_responses: list[StepResponse],
+    *,
+    m_terms: int = 3,
+    panel_id: str,
+    resolution: tuple[int, int],
+    valid_from: str,
+    valid_until: str,
+    created_at: str = "",
+    source: str = "lag-irf-builder",
+    max_nfev: int = 20000,
+    rms_residual_tol: float = DEFAULT_RMS_RESIDUAL_TOL,
+) -> CalibSet:
+    """Fit (a_i, b_i) from multi-exposure step responses -> CalibSet(LAG).
+
+    Raises:
+        LagIRFCalibrationError: fewer than 2 exposures (single-exposure ban,
+            SWR-401), a non-positive amplitude / empty residual, or a fit that
+            fails to converge / whose relative-RMS residual exceeds
+            ``rms_residual_tol`` ([T]) — a degenerate/unfittable curve must
+            surface as an explicit error, never a silently bad CalibSet.
+    """
+    if len(step_responses) < 2:
+        raise LagIRFCalibrationError(
+            "lag IRF: single-exposure calibration is forbidden (SWR-401); "
+            "supply >= 2 exposure levels (saturation 2..90% multi-point)"
+        )
+    if m_terms < 1:
+        raise LagIRFCalibrationError(f"lag IRF: M must be >= 1 (got {m_terms})")
+
+    # Stack normalized residuals from every exposure onto a common m-grid.
+    m_grids: list[np.ndarray] = []
+    normalized: list[np.ndarray] = []
+    for sr in step_responses:
+        if sr.amplitude <= 0:
+            raise LagIRFCalibrationError("lag IRF: exposure amplitude must be > 0")
+        res = np.asarray(sr.residual, dtype=np.float64).reshape(-1)
+        if res.size == 0:
+            raise LagIRFCalibrationError("lag IRF: empty residual curve")
+        m_grids.append(np.arange(1, res.size + 1, dtype=np.float64))
+        normalized.append(res / float(sr.amplitude))
+    m_all = np.concatenate(m_grids)
+    y_all = np.concatenate(normalized)
+
+    def _residuals(theta: np.ndarray) -> np.ndarray:
+        return _model(theta, m_all, m_terms) - y_all
+
+    # Deterministic initial guess: amplitudes share the first normalized sample;
+    # poles spread across (0, 1). Bounds keep a_i >= 0 and 0 < b_i < 1 (a
+    # physically decaying afterglow).
+    a0 = max(float(np.max(y_all)) / m_terms, 1e-6)
+    a_init = np.full(m_terms, a0, dtype=np.float64)
+    b_init = np.linspace(0.2, 0.85, m_terms, dtype=np.float64)
+    x0 = np.concatenate([a_init, b_init])
+    lower = np.concatenate([np.zeros(m_terms), np.full(m_terms, 1e-6)])
+    upper = np.concatenate([np.full(m_terms, np.inf), np.full(m_terms, 1.0 - 1e-9)])
+
+    fit = least_squares(
+        _residuals, x0, bounds=(lower, upper), method="trf", max_nfev=max_nfev
+    )
+
+    # Fit-quality gate: the least_squares result must not be used unconditionally.
+    # A non-successful status or a residual that stays large (relative to the
+    # target RMS) means the exponential-sum model did not capture the curve —
+    # reject with diagnostics instead of emitting a bad CalibSet.
+    final_residuals = np.asarray(_residuals(fit.x), dtype=np.float64)
+    rms_residual = float(np.sqrt(np.mean(final_residuals**2)))
+    rms_target = float(np.sqrt(np.mean(y_all**2)))
+    rel_rms = rms_residual / rms_target if rms_target > 0 else float("inf")
+    if (not fit.success) or (not np.isfinite(rel_rms)) or (rel_rms > rms_residual_tol):
+        raise LagIRFCalibrationError(
+            "lag IRF: fit did not converge to an acceptable exponential-sum "
+            f"model (success={fit.success}, status={fit.status}, "
+            f"relative_rms_residual={rel_rms:.4g} > tol={rms_residual_tol:.4g}); "
+            "the step-response curve is degenerate or not LTI-consistent"
+        )
+
+    a_fit = fit.x[:m_terms]
+    b_fit = fit.x[m_terms:]
+    # Sort by descending pole for a stable, identifiable ordering.
+    order = np.argsort(-b_fit)
+    a_fit = a_fit[order]
+    b_fit = b_fit[order]
+
+    # Embed fit-quality metrics in provenance (IEC 62304 traceability): a later
+    # consumer/auditor can read how well the emitted IRF fit its calibration.
+    quality_note = (
+        f"lag-irf fit: status={fit.status}, cost={float(fit.cost):.4g}, "
+        f"rel_rms_residual={rel_rms:.4g}, tol={rms_residual_tol:.4g}, "
+        f"m_terms={m_terms}, n_exposures={len(step_responses)}"
+    )
+
+    return CalibSet(
+        panel_id=panel_id,
+        resolution=tuple(resolution),
+        valid_from=valid_from,
+        valid_until=valid_until,
+        kind=CalibKind.LAG,
+        data={
+            K_IRF_A: a_fit.astype(np.float32),
+            K_IRF_B: b_fit.astype(np.float32),
+        },
+        provenance=CalibProvenance(
+            created_at=created_at, source=source, note=quality_note
+        ),
+    )

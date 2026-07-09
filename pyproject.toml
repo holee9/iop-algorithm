@@ -73,6 +73,7 @@ modules = [
     "modules.offset",
     "modules.gain",
     "modules.defect",
+    "modules.lag",
     "modules.line_noise",
     "modules.saturation",
     "modules.geometry",

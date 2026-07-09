@@ -148,18 +148,100 @@ def run_harness(
         return MismatchReport(passed=False, violations=tuple(violations))
 
     result = module.process(input_frame, calib, params)
+    violations.extend(_compare_output(module, result, expected))
+    return MismatchReport(passed=not violations, violations=tuple(violations))
 
-    # Return-type / extra-return-value violation (EC-4 auto-detectable range).
+
+def _compare_output(module: Any, result: Any, expected: XFrame) -> list[str]:
+    """Return output-comparison violations shared by both harness variants.
+
+    Detects the return-type / extra-return-value violation (EC-4 auto-detectable
+    range) and, for a valid XFrame, the full structural mismatch (CONTRACT-4).
+    """
     if not isinstance(result, XFrame):
-        violations.append(
+        return [
             f"{_name(module)}: process must return XFrame, got {type(result).__name__}"
-        )
+        ]
+    if not result.equals(expected):
+        return [f"{_name(module)}: output != expected ({_diff_summary(result, expected)})"]
+    return []
+
+
+def run_stateful_harness(
+    module: Any,
+    input_frame: XFrame,
+    calib: CalibSet,
+    params: Params,
+    expected: XFrame,
+    *,
+    pre_state: XFrame | None = None,
+    expected_state: XFrame | None = None,
+) -> MismatchReport:
+    """Harness for stateful modules (REQ-LAG-CONTRACT-6, Scenario 8).
+
+    @MX:NOTE: [AUTO] Additive extension of run_harness for the SWR-000-7
+    stateful exception (lag). The pure single-call path (run_harness) is
+    unchanged; this variant injects a pre-state via load_state, runs process,
+    compares the full output XFrame, and (when expected_state is given) compares
+    the post-state via serialize_state. This is the T4 runtime exercise of the
+    StatefulModule interface deferred at T0 (CONTRACT-2).
+    """
+    violations: list[str] = list(check_process_contract(module))
+    if violations:
         return MismatchReport(passed=False, violations=tuple(violations))
 
-    # Full structural comparison.
-    if not result.equals(expected):
-        detail = _diff_summary(result, expected)
-        violations.append(f"{_name(module)}: output != expected ({detail})")
+    if pre_state is not None:
+        load = getattr(module, "load_state", None)
+        if not callable(load):
+            return MismatchReport(
+                passed=False,
+                violations=(f"{_name(module)}: missing callable 'load_state'",),
+            )
+        # Module-raised exceptions during load_state (e.g. an M-mismatch
+        # pre-state) must surface as a MismatchReport, consistent with the
+        # harness contract — never escape as a traceback.
+        try:
+            load(pre_state)
+        except Exception as exc:  # noqa: BLE001 - convert to a named violation
+            return MismatchReport(
+                passed=False,
+                violations=(
+                    f"{_name(module)}: load_state raised "
+                    f"{type(exc).__name__}: {exc}",
+                ),
+            )
+
+    try:
+        result = module.process(input_frame, calib, params)
+    except Exception as exc:  # noqa: BLE001 - convert to a named violation
+        return MismatchReport(
+            passed=False,
+            violations=(
+                f"{_name(module)}: process raised {type(exc).__name__}: {exc}",
+            ),
+        )
+    out_violations = _compare_output(module, result, expected)
+    violations.extend(out_violations)
+    if not isinstance(result, XFrame):
+        return MismatchReport(passed=False, violations=tuple(violations))
+
+    if expected_state is not None:
+        serialize = getattr(module, "serialize_state", None)
+        if not callable(serialize):
+            violations.append(f"{_name(module)}: missing callable 'serialize_state'")
+        else:
+            state = serialize()
+            if not isinstance(state, XFrame):
+                violations.append(
+                    f"{_name(module)}: serialize_state must return XFrame, "
+                    f"got {type(state).__name__}"
+                )
+            elif not state.equals(expected_state):
+                violations.append(
+                    f"{_name(module)}: post-state != expected_state "
+                    f"({_diff_summary(state, expected_state)})"
+                )
+
     return MismatchReport(passed=not violations, violations=tuple(violations))
 
 

@@ -25,14 +25,16 @@ import pytest
 #   103 min. These are now LIVE in tests/modules/test_tc_correction.py (T2/WP1
 #   landed) and therefore removed from the deferred skeleton list below.
 # TC-004/005 (VV-002) gate the T4/WP2 lag CORRECTION processing (first-frame lag
-#   %, ghost CNR reduced below EV-104 min). The metrics-engine lag/ghost readout
-#   is exercised in tests/metrics/test_lag.py. Deferred to T4.
+#   %, ghost CNR reduced below EV-104 min). These are now LIVE in
+#   tests/modules/test_tc_lag.py (T4/WP2 landed) and therefore removed from the
+#   deferred skeleton list below. TC-005 is a T4 PARTIAL gate (ghost CNR
+#   reduction; the end-to-end ghost-invisible judgment depends on FB / real-panel
+#   integration, spec decision 6). The metrics-engine lag/ghost readout is
+#   exercised independently in tests/metrics/test_lag.py.
 # TC-018 (VV-011) gates the T9/WP10 NDT module: SNRn/SRb auto-read PLUS IQI auto-
 #   read accuracy on GDS-NDT weld specimens against EV-301 min. It is not purely
 #   the metric readout (which lives in tests/metrics/test_ndt.py). Deferred to T9.
 _SKELETONS = [
-    ("XDET-TC-004", "lag correction: first-frame lag % vs EV-104 (T4/WP2)"),
-    ("XDET-TC-005", "lag correction: ghost residual CNR vs EV-104 (T4/WP2)"),
     # TC-006/007 (line noise) and TC-008/009 (saturation/geometry) are the
     # T3/WP3+WP4 release gates; they are now LIVE in
     # tests/modules/test_tc_lnsg.py and therefore removed from this deferred

@@ -34,6 +34,14 @@ class CalibKind(str, Enum):
     OTHER = "other"
 
 
+# CalibSet(kind=LAG) data payload keys: the exponential-sum IRF coefficients
+# ([B]). Single source of truth shared by the producer (metrics.lag_irf) and the
+# consumer (modules.lag) so the two never drift on the key literals.
+K_IRF_A = "irf_a"  # (M,) amplitudes a_i
+K_IRF_B = "irf_b"  # (M,) poles b_i (0 < b_i < 1 for a decaying afterglow)
+LAG_PAYLOAD_KEYS: tuple[str, ...] = (K_IRF_A, K_IRF_B)
+
+
 @dataclass(frozen=True)
 class CalibProvenance:
     """Generation history of a CalibSet (IEC 62304 traceability)."""
