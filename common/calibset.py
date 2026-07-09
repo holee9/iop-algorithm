@@ -31,6 +31,11 @@ class CalibKind(str, Enum):
     DEFECT = "defect"
     LAG = "lag"
     LINE_NOISE = "line_noise"
+    # Noise model (alpha, sigma) for the T5 denoise stage (SPEC-DENOISE-001
+    # decision 2). A dedicated kind — rather than reusing OTHER — lets the
+    # orchestrator entry gate enforce kind-vs-stage wiring for denoise, which
+    # structurally blocks unauthorized default substitution (SWR-000-5).
+    NOISE = "noise"
     OTHER = "other"
 
 
@@ -40,6 +45,14 @@ class CalibKind(str, Enum):
 K_IRF_A = "irf_a"  # (M,) amplitudes a_i
 K_IRF_B = "irf_b"  # (M,) poles b_i (0 < b_i < 1 for a decaying afterglow)
 LAG_PAYLOAD_KEYS: tuple[str, ...] = (K_IRF_A, K_IRF_B)
+
+# CalibSet(kind=NOISE) data payload keys: the Poisson-Gaussian noise model
+# variance ~= alpha * signal + sigma**2 ([B], SWR-701). Single source of truth
+# shared by the producer (metrics.noise_model) and the consumer (modules.denoise)
+# so the two never drift on the key literals (LAG_PAYLOAD_KEYS precedent).
+K_NOISE_ALPHA = "alpha"  # () gain slope alpha (>0)
+K_NOISE_SIGMA = "sigma"  # () read-noise sigma (>=0)
+NOISE_PAYLOAD_KEYS: tuple[str, ...] = (K_NOISE_ALPHA, K_NOISE_SIGMA)
 
 
 @dataclass(frozen=True)

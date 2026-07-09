@@ -22,11 +22,16 @@ FRAME_SHAPE = (4, 4)
 
 def _calib_for(stage: str) -> CalibSet:
     # The gate requires kind to match the stage it is wired to; stages with no
-    # dedicated CalibKind (saturation/geometry/post) use OTHER.
-    try:
-        kind = CalibKind(stage)
-    except ValueError:
-        kind = CalibKind.OTHER
+    # dedicated CalibKind (saturation/geometry/post) use OTHER. The denoise stage
+    # is wired to CalibKind.NOISE (value "noise"), whose value differs from the
+    # stage name, so it is mapped explicitly (SPEC-DENOISE-001 decision 2/5).
+    if stage == "denoise":
+        kind = CalibKind.NOISE
+    else:
+        try:
+            kind = CalibKind(stage)
+        except ValueError:
+            kind = CalibKind.OTHER
     return CalibSet(
         panel_id="PANEL-A",
         resolution=FRAME_SHAPE,

@@ -41,8 +41,10 @@ _SKELETONS = [
     # list. TC-008 is a T3 PARTIAL gate (mask integration / boundary band /
     # no-restoration mechanism); the end-to-end boundary-artifact-invisible
     # judgment re-runs at T5/T6 (spec decision 4).
-    ("XDET-TC-010", "VST GAT + unbiased inverse (T5/WP5)"),
-    ("XDET-TC-011", "BM3D + mask weighting (T5/WP5)"),
+    # TC-010 (denoising performance: SNR improvement + MTF/SRb retention) and
+    # TC-011 (VST round-trip unbiasedness) are the T5/WP5 release gates; they are
+    # now LIVE in tests/modules/test_tc_denoise.py and therefore removed from this
+    # deferred list.
     ("XDET-TC-012", "MSE / DRC (T6/WP6)"),
     ("XDET-TC-013", "auto-windowing / GSDF (T6/WP7)"),
     ("XDET-TC-014", "GSDF LUT (T6/WP7)"),

@@ -8,7 +8,8 @@ other.
 calibration-refusal gate are safety-critical invariants (SWR-000-5).
 
 Order (REQ-INFRA-ORCH-3):
-    offset -> gain -> defect -> lag -> line_noise -> saturation -> geometry -> post
+    offset -> gain -> defect -> lag -> line_noise -> saturation -> geometry
+        -> denoise -> post
 
 Entry gate (REQ-INFRA-ORCH-4): a missing or mismatched CalibSet (resolution /
 panel_id) causes refusal with an explicit error. Defaults are NEVER substituted
@@ -34,6 +35,11 @@ CANONICAL_ORDER: tuple[str, ...] = (
     "line_noise",
     "saturation",
     "geometry",
+    # Dedicated VST+BM3D denoise stage between geometry and post
+    # (SPEC-DENOISE-001 decision 1). Registered stages are a subsequence of
+    # CANONICAL_ORDER, so inserting a stage is backward-compatible with pipelines
+    # that do not register it.
+    "denoise",
     "post",
 )
 
@@ -89,6 +95,10 @@ _KIND_BY_STAGE: dict[str, str] = {
     "defect": "defect",
     "lag": "lag",
     "line_noise": "line_noise",
+    # denoise stage consumes CalibSet(NOISE) — the (alpha, sigma) noise model
+    # (SPEC-DENOISE-001 decision 2/5). Kind-vs-stage enforcement blocks default
+    # substitution of the noise model at the entry gate.
+    "denoise": "noise",
 }
 
 
