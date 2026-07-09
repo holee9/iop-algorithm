@@ -1,7 +1,7 @@
 ---
 id: SPEC-TIER-001
-version: 0.1.1
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-07-09
 updated: 2026-07-09
 author: drake.lee
@@ -24,6 +24,11 @@ XDET 영상처리 SW P1의 **마지막 작업 T10**. 티어(tier)·동일성(equ
 - 구현 계획: [plan.md](./plan.md) · 인수 기준: [acceptance.md](./acceptance.md)
 
 ## HISTORY
+
+- **v0.2.0 (2026-07-10)** — 구현 완료(status: implemented). 커밋 4e67292(pipeline/tier.py·equivalence 확장) + 리뷰 결함 7건 수정. 458 passed / 0 skipped(2회 동일), 계약 6건 KEPT. **P1 최종 SPEC 완료 — Gen 1 대상 XDET-TC-000~021 전건 실동작(capstone 전수 스캔 검증), 골든 모델 형상 동결.** T0 표면(CANONICAL_ORDER/CalibKind) 무변경 확인. 확정:
+  - decide_tier params 타입 가드로 TierDecisionError 계약 완전성 확보.
+  - INTEGER_PATH_STAGES ↔ orchestrator._KIND_BY_STAGE 교차 드리프트 가드(tests/ 전용, 레이어링 위반 없이).
+  - import-linter에 pipeline.tier→modules/metrics 금지 forbidden 계약 신설.
 
 - **v0.1.1 (2026-07-09)** — plan-audit iteration 1 (FAIL 0.75) 결함 반영: D3(major, EC-3 이접 조항 "명시 오류 또는 정의된 보수적 기본 처리" → 명시 오류 단일 경로로 정정, 무단 임계 추정·조용한 최저 티어 대체·상위 승격 전부 금지)·D1(REQ-TIER-CONTRACT-3 acceptance 미추적 → Scenario 6·DoD 체크박스 추가). 감사에서 독립 재검증: 결정 1(pipeline/tier.py additive 래퍼, T0 표면 불변)·결정 3(tier=하드웨어 실행 경로 분류, EV 화질 등급 아님) 코드·SWR/EVAL 원문 대조로 승인(PROCEED).
 - **v0.1.0 (2026-07-09)** — 초안 생성. GitHub 이슈 #11. **P1 최종 SPEC(T10 티어/동일성 프레임 WP12).** 5개 요구 그룹(GATE/EQUIV/TIMING/CONTRACT/VALIDATE) EARS 구조 확정. 핵심 범위 결정:
