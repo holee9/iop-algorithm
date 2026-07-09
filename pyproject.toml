@@ -89,3 +89,16 @@ name = "Processing modules must not import metrics or pipeline (module -> common
 type = "forbidden"
 source_modules = ["modules"]
 forbidden_modules = ["metrics", "pipeline"]
+
+# Tier gating (T10, SPEC-TIER-001) is an ADDITIVE wrapper that consumes the
+# orchestrator surface + common only; the per-tier execution variants are INJECTED
+# by the caller (registry pattern), so pipeline.tier must never import modules or
+# metrics. The layers contract above permits pipeline -> modules in general, so this
+# gap is closed here explicitly (replaces the hand-rolled AST scanner that used to
+# live in tests/pipeline/test_tier_contract.py; import-linter is the single source
+# of truth).
+[[tool.importlinter.contracts]]
+name = "Tier gating consumes orchestrator + common only (registry injection: no modules/metrics)"
+type = "forbidden"
+source_modules = ["pipeline.tier"]
+forbidden_modules = ["modules", "metrics"]
