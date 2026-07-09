@@ -1,21 +1,21 @@
-"""XDET-TC-001 .. TC-021 skeletons (REQ-INFRA-CI-1).
+"""XDET-TC-001 .. TC-021 release-gate registry (REQ-INFRA-CI-1) — P1 COMPLETE.
 
-Every test case is registered as a pytest case now so CI tracks the full matrix
-from T0. Cases beyond TC-000 are skipped with their TC id + the WP that will
-implement them. They are activated as their owning work packages land (T1+).
+Every test case is registered as a pytest case so CI tracks the full matrix from
+T0. Cases were skipped with their TC id + owning WP until that WP landed, then
+converted to live gates in the WP's own test module. As of T10 (SPEC-TIER-001, the
+P1 final SPEC) ALL Gen 1 cases XDET-TC-000..021 are LIVE; `_SKELETONS` is empty and
+`test_all_gen1_tc_skeletons_are_live` asserts the P1 golden-model shape-freeze
+capstone. Gen 2 items (DL path SWR-1303, ADR) are intentionally out of P1 scope.
 
-Release-gate integrity (code-review finding #2): the TC-0xx cases here are the
-CI release gates defined in docs/XDET_TestSpec_v1.0.md. They gate PROCESSING
-work packages (correction / lag / NDT modules) against EV min thresholds — they
-are NOT existence checks for the T1 metrics engine. TC ids owned by later WPs
-therefore stay SKIPPED here until their processing module lands. The T1 metrics
-engine's own reproduction coverage lives under tests/metrics/* (its synthetic
-phantoms and analytic known values), independent of these gates.
+Release-gate integrity (code-review finding #2): the TC-0xx cases are the CI
+release gates defined in docs/XDET_TestSpec_v1.0.md. They gate PROCESSING /
+execution work packages (correction / lag / NDT / tier gates) — they are NOT
+existence checks for the T1 metrics engine, whose own reproduction coverage lives
+under tests/metrics/* (synthetic phantoms + analytic known values), independent of
+these gates. The comments below record where each converted TC now lives.
 """
 
 from __future__ import annotations
-
-import pytest
 
 # (TC id, short reason / owning work package). Mirrors CLAUDE.md T1..T10 DoDs and
 # the VV -> WP mapping in docs/XDET_TestSpec_v1.0.md.
@@ -64,11 +64,19 @@ _SKELETONS = [
     # DoD) is the T8/WP9 release gate; it is now LIVE in
     # tests/modules/test_tc_virtual_grid.py and therefore removed from this
     # deferred list.
-    ("XDET-TC-020", "tier gating structure (T10)"),
-    ("XDET-TC-021", "equivalence numeric gate: bit-identical / +/-1 LSB (P2)"),
+    # TC-020 (tier gating structure) and TC-021 (equivalence diff frame structure)
+    # are the T10/WP12 release gates; they are now LIVE in
+    # tests/pipeline/test_tc_tier.py and therefore removed from this deferred list.
+    # Their STRUCTURE pass (numeric gates — tier thresholds, integer bit-identical /
+    # float +/-1 LSB, absolute processing time — remain P2) completes Gen 1
+    # XDET-TC-000..021 and marks the P1 golden-model shape-freeze milestone
+    # (SPEC-TIER-001 VALIDATE-4; P1 final SPEC).
 ]
 
 
-@pytest.mark.parametrize("tc_id,reason", _SKELETONS, ids=[t[0] for t in _SKELETONS])
-def test_tc_skeleton(tc_id, reason):
-    pytest.skip(f"{tc_id} deferred: {reason}")
+def test_all_gen1_tc_skeletons_are_live():
+    """P1 capstone (SPEC-TIER-001 VALIDATE-4): no deferred Gen 1 TC skeleton
+    remains. TC-020/021 — the last two — went live in tests/pipeline/test_tc_tier.py,
+    completing Gen 1 XDET-TC-000..021 (golden-model shape-freeze). Gen 2 items
+    (DL path SWR-1303, ADR) are intentionally out of P1 scope."""
+    assert _SKELETONS == []
