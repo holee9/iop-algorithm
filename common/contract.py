@@ -163,6 +163,69 @@ def run_harness(
     return MismatchReport(passed=not violations, violations=tuple(violations))
 
 
+def run_stateful_harness(
+    module: Any,
+    input_frame: XFrame,
+    calib: CalibSet,
+    params: Params,
+    expected: XFrame,
+    *,
+    pre_state: XFrame | None = None,
+    expected_state: XFrame | None = None,
+) -> MismatchReport:
+    """Harness for stateful modules (REQ-LAG-CONTRACT-6, Scenario 8).
+
+    @MX:NOTE: [AUTO] Additive extension of run_harness for the SWR-000-7
+    stateful exception (lag). The pure single-call path (run_harness) is
+    unchanged; this variant injects a pre-state via load_state, runs process,
+    compares the full output XFrame, and (when expected_state is given) compares
+    the post-state via serialize_state. This is the T4 runtime exercise of the
+    StatefulModule interface deferred at T0 (CONTRACT-2).
+    """
+    violations: list[str] = list(check_process_contract(module))
+    if violations:
+        return MismatchReport(passed=False, violations=tuple(violations))
+
+    if pre_state is not None:
+        load = getattr(module, "load_state", None)
+        if not callable(load):
+            return MismatchReport(
+                passed=False,
+                violations=(f"{_name(module)}: missing callable 'load_state'",),
+            )
+        load(pre_state)
+
+    result = module.process(input_frame, calib, params)
+    if not isinstance(result, XFrame):
+        violations.append(
+            f"{_name(module)}: process must return XFrame, got {type(result).__name__}"
+        )
+        return MismatchReport(passed=False, violations=tuple(violations))
+    if not result.equals(expected):
+        violations.append(
+            f"{_name(module)}: output != expected ({_diff_summary(result, expected)})"
+        )
+
+    if expected_state is not None:
+        serialize = getattr(module, "serialize_state", None)
+        if not callable(serialize):
+            violations.append(f"{_name(module)}: missing callable 'serialize_state'")
+        else:
+            state = serialize()
+            if not isinstance(state, XFrame):
+                violations.append(
+                    f"{_name(module)}: serialize_state must return XFrame, "
+                    f"got {type(state).__name__}"
+                )
+            elif not state.equals(expected_state):
+                violations.append(
+                    f"{_name(module)}: post-state != expected_state "
+                    f"({_diff_summary(state, expected_state)})"
+                )
+
+    return MismatchReport(passed=not violations, violations=tuple(violations))
+
+
 def _diff_summary(result: XFrame, expected: XFrame) -> str:
     # Field coverage must mirror XFrame.equals so a FAIL always names a field.
     parts: list[str] = []
