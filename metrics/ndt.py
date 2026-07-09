@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.ndimage import gaussian_filter, grey_opening
 
 from common import robust_stats
 from common.contract import Params
@@ -27,6 +28,18 @@ from metrics.result import MetricCondition, MetricReadError, MetricResult, requi
 
 P_DIP_THRESHOLD = "ndt_dip_threshold"  # ISO 20% dip criterion (fraction) [P]
 P_SRB_NORM_UM = "ndt_srb_norm_um"  # 88.6 um normalization constant [S]
+
+# -- NDT T9 (SPEC-NDT-001) externalized parameter keys (no hardcoded literals) --
+P_TARGET_SNRN = "ndt_target_snrn"  # acquisition-termination target SNRn [S]/[P]
+P_MIN_ROI_PIXELS = "ndt_min_roi_pixels"  # minimum valid uniform pixels [P]
+P_THICKNESS_METHOD = "ndt_thickness_method"  # "morphological_opening" | "gaussian" [C]
+P_THICKNESS_SCALE = "ndt_thickness_scale_px"  # low-freq profile scale [T]
+P_THICKNESS_GRAD_MIN = "ndt_thickness_gradient_min_frac"  # gradient-presence floor [T]
+P_WIRE_VISIBILITY = "ndt_wire_visibility_threshold"  # single-wire visibility [T]/[P]
+P_CLASS_A_SNRN = "ndt_class_a_snrn_min"  # Class A SNRn minimum [S]/[P]
+P_CLASS_A_WIRE = "ndt_class_a_required_wire"  # Class A required wire number [S]/[P]
+P_CLASS_B_SNRN = "ndt_class_b_snrn_min"  # Class B SNRn minimum [S]/[P]
+P_CLASS_B_WIRE = "ndt_class_b_required_wire"  # Class B required wire number [S]/[P]
 
 
 @dataclass(frozen=True)
@@ -163,4 +176,402 @@ def compute_snrn(
             calibset_id=calibset_id,
             beam_quality=params.get("beam_quality"),
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# T9 WP10 (SPEC-NDT-001): real-time SNRn accumulation (SWR-1201).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ShotLogEntry:
+    """One ISO 17636-2 acquisition log entry (SWR-1201 shot-by-shot record).
+
+    Args:
+        shot_index: 1-based index of this accumulation step.
+        frame_count: total frames folded into the running average so far.
+        snrn: running normalized SNR at this step.
+        srb_um: SRb_image consumed for the normalization (um).
+        snr: running (un-normalized) spatial SNR of the accumulated frame.
+    """
+
+    shot_index: int
+    frame_count: int
+    snrn: float
+    srb_um: float
+    snr: float
+
+
+class SNRnAccumulator:
+    """Streaming real-time SNRn over a uniform ROI (SWR-1201, REQ-NDT-ACCUM).
+
+    @MX:ANCHOR: [AUTO] T9 NDT streaming SNRn entry point — consumes the shared
+    Welford accumulator (common.robust_stats) to update the running SNR /
+    SNRn = SNR * 88.6 / SRb per frame, emit the acquisition-termination signal
+    on reaching the target, and record the per-shot ISO 17636-2 log.
+    @MX:REASON: fan_in spans the IQI report driver, XDET-TC-018, and acceptance
+    Scenario 3; it reuses T1 ``compute_snrn`` for the normalization formula so a
+    divergent local formula here would double-source SNRn (SWR-000-9).
+
+    This is a metrics-layer stateful *measurement* tool, NOT a pipeline
+    processing module: it does not follow ``process(XFrame, CalibSet, Params) ->
+    XFrame`` and never touches the orchestrator (REQ-NDT-CONTRACT-1/-2).
+    """
+
+    def __init__(
+        self,
+        roi: tuple[int, int, int, int],
+        srb_um: float,
+        params: Params,
+        *,
+        target_snrn: float | None = None,
+        calibset_id: str | None = None,
+    ) -> None:
+        if srb_um <= 0:
+            raise MetricReadError("SNRn accumulator: SRb_image must be positive")
+        top, left, height, width = roi
+        if height <= 0 or width <= 0 or top < 0 or left < 0:
+            raise MetricReadError(f"SNRn accumulator: invalid ROI {roi}")
+        self._roi = roi
+        self._srb = float(srb_um)
+        self._params = params
+        self._calibset_id = calibset_id
+        self._norm = require_param(params, P_SRB_NORM_UM, float)
+        self._min_pixels = int(params.get(P_MIN_ROI_PIXELS, 1) or 1)
+        self._target = (
+            float(target_snrn)
+            if target_snrn is not None
+            else (float(params.get(P_TARGET_SNRN)) if params.get(P_TARGET_SNRN) is not None else None)
+        )
+        self._acc = robust_stats.WelfordAccumulator()
+        self._log: list[ShotLogEntry] = []
+        self._reached = False
+        self._reached_index: int | None = None
+
+    def update(self, frame: XFrame) -> ShotLogEntry:
+        """Fold one new frame in and return this shot's log entry.
+
+        Raises:
+            MetricReadError: ROI out of the frame bounds, too few valid uniform
+                pixels, or a degenerate (zero-noise) accumulated region — no
+                silent SNR is produced (REQ-NDT-ACCUM-6 / EC-1).
+        """
+        top, left, height, width = self._roi
+        pixels = np.asarray(frame.pixel, dtype=np.float64)
+        ny, nx = pixels.shape
+        if top + height > ny or left + width > nx:
+            raise MetricReadError(
+                f"SNRn accumulator: ROI {self._roi} exceeds frame bounds {(ny, nx)}"
+            )
+        region = pixels[top : top + height, left : left + width]
+        if region.size < self._min_pixels:
+            raise MetricReadError(
+                f"SNRn accumulator: ROI has {region.size} pixels, "
+                f"below the minimum {self._min_pixels}"
+            )
+        self._acc.update(region)
+        accumulated = self._acc.mean  # per-pixel running average over the ROI
+        mean = robust_stats.robust_mean(accumulated)
+        std = robust_stats.robust_std(accumulated)
+        if std == 0:
+            raise MetricReadError(
+                "SNRn accumulator: zero noise in the accumulated uniform region"
+            )
+        snr = float(mean / std)
+        snrn = snr * self._norm / self._srb
+        count = self._acc.count
+        entry = ShotLogEntry(
+            shot_index=count, frame_count=count, snrn=snrn, srb_um=self._srb, snr=snr
+        )
+        self._log.append(entry)
+        if self._target is not None and not self._reached and snrn >= self._target:
+            self._reached = True
+            self._reached_index = count
+        return entry
+
+    @property
+    def shot_log(self) -> tuple[ShotLogEntry, ...]:
+        """The per-shot ISO 17636-2 acquisition log accumulated so far."""
+        return tuple(self._log)
+
+    @property
+    def target_reached(self) -> bool:
+        """Acquisition-termination decision (target SNRn reached)."""
+        return self._reached
+
+    @property
+    def target_frame_index(self) -> int | None:
+        """1-based frame index at which the target was first reached (or None)."""
+        return self._reached_index
+
+    @property
+    def current(self) -> ShotLogEntry | None:
+        """The most recent shot log entry (None before the first frame)."""
+        return self._log[-1] if self._log else None
+
+
+# ---------------------------------------------------------------------------
+# T9 WP10: thickness correction (SWR-1203, REQ-NDT-THICK).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ThicknessResult:
+    """Measurement-local flattened copy (NOT a pipeline-flowing XFrame).
+
+    Args:
+        flattened: the flattened pixel array (float64), consumed only by the
+            downstream SRb-protection / CSa measurement — it never re-enters the
+            pipeline as a processing-stage output (SPEC decision 1).
+        low_freq: the subtracted large-scale low-frequency thickness profile.
+        method: the estimator used ("morphological_opening" | "gaussian").
+        scale_px: the low-frequency scale applied.
+        changed: False when the input passed through numerically unchanged.
+        warnings: non-fatal advisories (no-gradient / oversized-scale passthrough).
+    """
+
+    flattened: np.ndarray
+    low_freq: np.ndarray
+    method: str
+    scale_px: float
+    changed: bool
+    warnings: tuple[str, ...] = ()
+
+
+def correct_thickness(
+    frame: XFrame,
+    params: Params,
+    *,
+    calibset_id: str | None = None,
+) -> ThicknessResult:
+    """Flatten a thickness-derived low-frequency gradient (SWR-1203).
+
+    Subtracts a large-scale low-frequency profile (Params ``thickness_method``:
+    ``morphological_opening`` default, or ``gaussian``; scale via
+    ``thickness_scale_px`` [T]) so the thickness gradient is removed while the
+    high-frequency defect band is preserved. The input XFrame is consumed
+    read-only and the flattened result is a measurement-local copy.
+
+    A flat input (no low-frequency gradient) or an oversized scale passes
+    through numerically unchanged with a warning — never a silent high-frequency
+    distortion (REQ-NDT-THICK-3 / EC-2).
+
+    Raises:
+        MetricReadError: unknown ``thickness_method`` value.
+    """
+    image = np.asarray(frame.pixel, dtype=np.float64)
+    method = str(params.get(P_THICKNESS_METHOD, "morphological_opening"))
+    scale = require_param(params, P_THICKNESS_SCALE, float)
+    grad_min = float(params.get(P_THICKNESS_GRAD_MIN, 0.0) or 0.0)
+    ny, nx = image.shape
+    warnings: list[str] = []
+
+    if scale >= min(ny, nx):
+        return ThicknessResult(
+            flattened=image.copy(),
+            low_freq=np.zeros_like(image),
+            method=method,
+            scale_px=scale,
+            changed=False,
+            warnings=(
+                f"thickness: scale {scale} >= frame size {min(ny, nx)}; "
+                "passthrough numerically unchanged (no subtraction)",
+            ),
+        )
+
+    if method == "gaussian":
+        low = gaussian_filter(image, sigma=scale, mode="nearest")
+    elif method == "morphological_opening":
+        size = int(2 * round(scale) + 1)
+        low = grey_opening(image, size=(size, size), mode="nearest")
+    else:
+        raise MetricReadError(
+            f"thickness: unknown method '{method}' "
+            "(expected 'morphological_opening' or 'gaussian')"
+        )
+
+    prof_mean = float(np.mean(low))
+    prof_range = float(low.max() - low.min())
+    frac = prof_range / prof_mean if prof_mean > 0 else 0.0
+    if frac < grad_min:
+        warnings.append(
+            f"thickness: low-frequency gradient range/mean {frac:.4f} below "
+            f"threshold {grad_min}; passthrough numerically unchanged"
+        )
+        return ThicknessResult(
+            flattened=image.copy(),
+            low_freq=low,
+            method=method,
+            scale_px=scale,
+            changed=False,
+            warnings=tuple(warnings),
+        )
+
+    flattened = image - low + prof_mean
+    return ThicknessResult(
+        flattened=flattened,
+        low_freq=low,
+        method=method,
+        scale_px=scale,
+        changed=True,
+        warnings=tuple(warnings),
+    )
+
+
+# ---------------------------------------------------------------------------
+# T9 WP10: single-wire IQI auto-read + Class A/B report (SWR-1204, REQ-NDT-IQI).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WireElement:
+    """One single-wire (ISO 19232 wire-type) IQI element.
+
+    Args:
+        number: the IQI wire number (higher number = thinner wire = finer detail).
+        index: sample index of the wire's dip in the 1D profile.
+    """
+
+    number: int
+    index: int
+
+
+def read_single_wire_iqi(
+    profile: np.ndarray,
+    wires: list[WireElement],
+    params: Params,
+    *,
+    calibset_id: str | None = None,
+) -> MetricResult:
+    """Auto-detect single-wire IQI elements and the minimum visible wire.
+
+    A wire is *visible* when its dip contrast (1 - valley / background) meets the
+    externalized visibility threshold. ``min_visible_wire`` is the finest
+    (highest-numbered) still-visible wire — the wire-type IQI sensitivity readout
+    (SWR-1204). The visibility threshold is a Params [T]/[P] value, never baked in.
+
+    Raises:
+        MetricReadError: no wire elements, non-positive background, or no wire
+            visible at all (no silent default sensitivity is substituted).
+    """
+    prof = np.asarray(profile, dtype=np.float64)
+    threshold = require_param(params, P_WIRE_VISIBILITY, float)
+    if not wires:
+        raise MetricReadError("single-wire IQI: no wire elements provided")
+    background = float(np.median(prof))
+    if background <= 0:
+        raise MetricReadError("single-wire IQI: non-positive background")
+
+    contrasts: dict[int, float] = {}
+    visible: dict[int, bool] = {}
+    for wire in wires:
+        valley = float(prof[wire.index])
+        contrast = (background - valley) / background
+        contrasts[wire.number] = contrast
+        visible[wire.number] = contrast >= threshold
+
+    visible_numbers = [n for n, v in visible.items() if v]
+    if not visible_numbers:
+        raise MetricReadError(
+            "single-wire IQI: no visible wire (all dips below the visibility "
+            "threshold) — no minimum-visible-wire substituted"
+        )
+    min_visible_wire = max(visible_numbers)
+    return MetricResult(
+        name="single_wire_iqi",
+        values={
+            "min_visible_wire": min_visible_wire,
+            "contrasts": contrasts,
+            "visible": visible,
+            "background": background,
+        },
+        condition=MetricCondition(params_hash=params.hash(), calibset_id=calibset_id),
+    )
+
+
+@dataclass(frozen=True)
+class IqiShot:
+    """Combined per-shot inputs to the Class A/B report.
+
+    Args:
+        shot_index: 1-based shot index.
+        snrn: normalized SNR for this shot (from SNRnAccumulator).
+        srb_um: duplex-wire SRb_image (from read_duplex_srb reuse).
+        min_visible_wire: finest visible single-wire number (read_single_wire_iqi).
+    """
+
+    shot_index: int
+    snrn: float
+    srb_um: float
+    min_visible_wire: int
+
+
+@dataclass(frozen=True)
+class ShotVerdict:
+    """Per-shot Class A/B verdict row of the inspection report."""
+
+    shot_index: int
+    snrn: float
+    srb_um: float
+    min_visible_wire: int
+    class_a_pass: bool
+    class_b_pass: bool
+    verdict: str  # "A" | "B" | "FAIL"
+
+
+def build_iqi_report(
+    shots: list[IqiShot],
+    params: Params,
+    *,
+    calibset_id: str | None = None,
+) -> MetricResult:
+    """Combine SNRn + duplex SRb + min-visible-wire into a Class A/B report.
+
+    Each shot is graded against the ISO 17636-2 Class A/B requirements (SNRn
+    minimum + required wire number), all Params-injected [S]/[P] and consumed
+    only to PRODUCE the report — the EV-301 test pass line stays outside the
+    engine (measurement != judgment, REQ-NDT-CONTRACT-4). Class B is the more
+    demanding class; a shot's verdict is the most demanding class it satisfies.
+
+    Args:
+        shots: per-shot combined inputs (SNRn, SRb, min visible wire).
+        params: externalized Class A/B requirements.
+    """
+    a_snrn = require_param(params, P_CLASS_A_SNRN, float)
+    a_wire = require_param(params, P_CLASS_A_WIRE, int)
+    b_snrn = require_param(params, P_CLASS_B_SNRN, float)
+    b_wire = require_param(params, P_CLASS_B_WIRE, int)
+
+    verdicts: list[ShotVerdict] = []
+    for shot in shots:
+        a_ok = shot.snrn >= a_snrn and shot.min_visible_wire >= a_wire
+        b_ok = shot.snrn >= b_snrn and shot.min_visible_wire >= b_wire
+        if b_ok:
+            verdict = "B"
+        elif a_ok:
+            verdict = "A"
+        else:
+            verdict = "FAIL"
+        verdicts.append(
+            ShotVerdict(
+                shot_index=shot.shot_index,
+                snrn=shot.snrn,
+                srb_um=shot.srb_um,
+                min_visible_wire=shot.min_visible_wire,
+                class_a_pass=a_ok,
+                class_b_pass=b_ok,
+                verdict=verdict,
+            )
+        )
+    return MetricResult(
+        name="iqi_report",
+        values={
+            "shots": tuple(verdicts),
+            "class_a_snrn_min": a_snrn,
+            "class_a_required_wire": a_wire,
+            "class_b_snrn_min": b_snrn,
+            "class_b_required_wire": b_wire,
+        },
+        condition=MetricCondition(params_hash=params.hash(), calibset_id=calibset_id),
     )

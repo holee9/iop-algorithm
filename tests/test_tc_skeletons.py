@@ -32,8 +32,13 @@ import pytest
 #   integration, spec decision 6). The metrics-engine lag/ghost readout is
 #   exercised independently in tests/metrics/test_lag.py.
 # TC-018 (VV-011) gates the T9/WP10 NDT module: SNRn/SRb auto-read PLUS IQI auto-
-#   read accuracy on GDS-NDT weld specimens against EV-301 min. It is not purely
-#   the metric readout (which lives in tests/metrics/test_ndt.py). Deferred to T9.
+#   read accuracy against EV-301 min, and TC-019 gates the T9 thickness correction
+#   (SRb protection EV-102 + CSa EV-303). Both are now LIVE in
+#   tests/metrics/test_tc_ndt.py (T9/WP10 landed) and therefore removed from the
+#   deferred skeleton list below. They gate the NEW T9 processing (streaming SNRn
+#   accumulation, single-wire IQI report, thickness correction) on synthetic
+#   phantoms, not the pre-existing T1 read functions (whose reproduction coverage
+#   lives in tests/metrics/test_ndt*.py).
 _SKELETONS = [
     # TC-006/007 (line noise) and TC-008/009 (saturation/geometry) are the
     # T3/WP3+WP4 release gates; they are now LIVE in
@@ -59,8 +64,6 @@ _SKELETONS = [
     # DoD) is the T8/WP9 release gate; it is now LIVE in
     # tests/modules/test_tc_virtual_grid.py and therefore removed from this
     # deferred list.
-    ("XDET-TC-018", "NDT SNRn + IQI auto-read on weld specimens vs EV-301 (T9/WP10)"),
-    ("XDET-TC-019", "NDT thickness correction (T9/WP10)"),
     ("XDET-TC-020", "tier gating structure (T10)"),
     ("XDET-TC-021", "equivalence numeric gate: bit-identical / +/-1 LSB (P2)"),
 ]
