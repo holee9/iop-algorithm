@@ -49,8 +49,12 @@ _SKELETONS = [
     # TC-014 (GSDF LUT PS3.14 conformance, hard DoD) are the T6/WP6+WP7 release
     # gates; they are now LIVE in tests/modules/test_tc_post.py and therefore
     # removed from this deferred list.
-    ("XDET-TC-015", "grid-line suppression, observed-peak search (T7/WP8)"),
-    ("XDET-TC-016", "grid density classes (T7/WP8)"),
+    # TC-015 (grid detection accuracy + residual grid-line invisibility, hard DoD)
+    # and TC-016 (moire / low-freq fold + GLS-failure passthrough) are the T7/WP8
+    # release gates; they are now LIVE in tests/modules/test_tc_grid.py and
+    # therefore removed from this deferred list. TC-016 is a T7 PARTIAL gate (the
+    # low-frequency-fold residual under the attenuation cap and the observer
+    # "invisible" study are licensing-deferred, spec decision 3).
     ("XDET-TC-017", "kernel virtual grid / SKS (T8/WP9)"),
     ("XDET-TC-018", "NDT SNRn + IQI auto-read on weld specimens vs EV-301 (T9/WP10)"),
     ("XDET-TC-019", "NDT thickness correction (T9/WP10)"),

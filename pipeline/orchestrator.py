@@ -35,6 +35,17 @@ CANONICAL_ORDER: tuple[str, ...] = (
     "line_noise",
     "saturation",
     "geometry",
+    # Dedicated grid-line suppression stage between geometry and denoise
+    # (SPEC-GRID-001 decision 1). Placed AFTER geometry (observed-spectrum peak
+    # search needs the axis-aligned, distortion-corrected frame) and BEFORE
+    # denoise (BM3D would otherwise mistake the periodic grid for repeating
+    # texture and smear it) and mse (which would amplify a residual grid line).
+    # Registered stages are a subsequence of CANONICAL_ORDER, so inserting this
+    # stage is backward-compatible with pipelines that do not register it
+    # (SPEC-DENOISE-001 / SPEC-POST-001 precedent). It is not wired in
+    # _KIND_BY_STAGE: grid has no detector calibration and satisfies the entry
+    # gate with CalibSet(OTHER), an empty placeholder (decision 2).
+    "grid",
     # Dedicated VST+BM3D denoise stage between geometry and post
     # (SPEC-DENOISE-001 decision 1). Registered stages are a subsequence of
     # CANONICAL_ORDER, so inserting a stage is backward-compatible with pipelines
