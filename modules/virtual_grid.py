@@ -207,7 +207,7 @@ def estimate_scatter(
     """
     i_down = _downsample(image, levels)
     p_hat = i_down
-    s_down = _dual_gaussian_conv(p_hat, amp, sigma)
+    s_down = None
     for _ in range(int(iterations)):
         s_down = _dual_gaussian_conv(p_hat, amp, sigma)
         p_hat = i_down - s_down
