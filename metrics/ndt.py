@@ -23,7 +23,7 @@ from scipy.ndimage import gaussian_filter, grey_opening
 
 from common import robust_stats
 from common.contract import Params
-from common.xframe import XFrame
+from common.xframe import XFrame, new_frame
 from metrics.result import MetricCondition, MetricReadError, MetricResult, require_param
 
 P_DIP_THRESHOLD = "ndt_dip_threshold"  # ISO 20% dip criterion (fraction) [P]
@@ -270,16 +270,37 @@ class SNRnAccumulator:
                 f"SNRn accumulator: ROI has {region.size} pixels, "
                 f"below the minimum {self._min_pixels}"
             )
-        self._acc.update(region)
-        accumulated = self._acc.mean  # per-pixel running average over the ROI
-        mean = robust_stats.robust_mean(accumulated)
-        std = robust_stats.robust_std(accumulated)
-        if std == 0:
+        # Peek the accumulated per-pixel running average WITHOUT mutating the
+        # shared Welford accumulator, so a rejected frame is a true no-op on
+        # accumulator state (code-review defect 2). The peek reproduces the exact
+        # Welford mean recurrence mean_k = mean_{k-1} + (region - mean_{k-1})/k.
+        count = self._acc.count
+        if count == 0:
+            accumulated = region.astype(np.float64, copy=True)
+        else:
+            prev = self._acc.mean
+            accumulated = prev + (region - prev) / (count + 1)
+        # Single source of truth for the SNR -> SNRn normalization: reuse the T1
+        # compute_snrn definition on the accumulated ROI (code-review defect 5).
+        # It also enforces the zero-noise rejection contract (compute_snr raises
+        # on a degenerate region), which — evaluated on the PEEK before the
+        # commit below — keeps rejection a no-op (REQ-NDT-ACCUM-6 / EC-1).
+        try:
+            result = compute_snrn(
+                new_frame(accumulated),
+                (0, 0, accumulated.shape[0], accumulated.shape[1]),
+                self._srb,
+                self._params,
+                calibset_id=self._calibset_id,
+            )
+        except MetricReadError as exc:
             raise MetricReadError(
                 "SNRn accumulator: zero noise in the accumulated uniform region"
-            )
-        snr = float(mean / std)
-        snrn = snr * self._norm / self._srb
+            ) from exc
+        # Frame accepted: commit it to the shared accumulator.
+        self._acc.update(region)
+        snrn = float(result.get("snrn"))
+        snr = float(result.get("snr"))
         count = self._acc.count
         entry = ShotLogEntry(
             shot_index=count, frame_count=count, snrn=snrn, srb_um=self._srb, snr=snr
@@ -339,6 +360,18 @@ class ThicknessResult:
     warnings: tuple[str, ...] = ()
 
 
+def _disk_footprint(radius: int) -> np.ndarray:
+    """Boolean disk (circular) structuring element of the given radius.
+
+    @MX:NOTE: [AUTO] plan.md THICK HOW mandates a large-diameter CIRCULAR
+    structuring element for the opening estimator, not a square — so the
+    low-frequency thickness profile is flattened isotropically.
+    """
+    r = max(int(radius), 0)
+    yy, xx = np.ogrid[-r : r + 1, -r : r + 1]
+    return (yy * yy + xx * xx) <= r * r
+
+
 def correct_thickness(
     frame: XFrame,
     params: Params,
@@ -367,7 +400,26 @@ def correct_thickness(
     ny, nx = image.shape
     warnings: list[str] = []
 
-    if scale >= min(ny, nx):
+    # Method-specific effective kernel span (linear support in px). The oversized
+    # guard must compare the ACTUAL structuring support against the frame, not the
+    # raw scale (code-review defect 1): grayscale opening builds a DOUBLE-width
+    # kernel (2*scale+1), so a scale well under the frame size can still yield a
+    # structuring element that spans the whole frame and degenerates the flatten.
+    if method == "gaussian":
+        # A Gaussian low-pass is well defined for any sigma below the frame
+        # extent; its effective radius is the characteristic scale sigma.
+        radius = None
+        kernel_span = scale
+    elif method == "morphological_opening":
+        radius = int(round(scale))
+        kernel_span = 2 * radius + 1  # full circular structuring-element diameter
+    else:
+        raise MetricReadError(
+            f"thickness: unknown method '{method}' "
+            "(expected 'morphological_opening' or 'gaussian')"
+        )
+
+    if kernel_span >= min(ny, nx):
         return ThicknessResult(
             flattened=image.copy(),
             low_freq=np.zeros_like(image),
@@ -375,21 +427,16 @@ def correct_thickness(
             scale_px=scale,
             changed=False,
             warnings=(
-                f"thickness: scale {scale} >= frame size {min(ny, nx)}; "
-                "passthrough numerically unchanged (no subtraction)",
+                f"thickness: scale {scale} gives {method} kernel span "
+                f"{kernel_span} >= frame size {min(ny, nx)}; passthrough "
+                "numerically unchanged (no subtraction)",
             ),
         )
 
     if method == "gaussian":
         low = gaussian_filter(image, sigma=scale, mode="nearest")
-    elif method == "morphological_opening":
-        size = int(2 * round(scale) + 1)
-        low = grey_opening(image, size=(size, size), mode="nearest")
-    else:
-        raise MetricReadError(
-            f"thickness: unknown method '{method}' "
-            "(expected 'morphological_opening' or 'gaussian')"
-        )
+    else:  # morphological_opening: large-diameter CIRCULAR (disk) SE (plan.md HOW)
+        low = grey_opening(image, footprint=_disk_footprint(radius), mode="nearest")
 
     prof_mean = float(np.mean(low))
     prof_range = float(low.max() - low.min())
@@ -466,6 +513,11 @@ def read_single_wire_iqi(
     contrasts: dict[int, float] = {}
     visible: dict[int, bool] = {}
     for wire in wires:
+        if wire.index < 0 or wire.index >= prof.size:
+            raise MetricReadError(
+                f"single-wire IQI: wire {wire.number} index {wire.index} out of "
+                f"range [0, {prof.size}) — no silent wrap-around read"
+            )
         valley = float(prof[wire.index])
         contrast = (background - valley) / background
         contrasts[wire.number] = contrast

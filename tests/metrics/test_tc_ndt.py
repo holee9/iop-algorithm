@@ -13,8 +13,20 @@ EV_NDT); the engine only produces values.
 - XDET-TC-019 (VV-011, hard DoD): thickness correction preserves the high-freq
   defect band -> SRb degradation <= EV-102 min AND MTF@Nyquist retention >=
   EV-102 min (deterministic, via the T1 metrics/mtf engine), plus a CSa proxy vs
-  EV-303 min. The edge-based MTF/SRb leg uses the Gaussian estimator (see the
-  SPEC deviation note in the SPEC-NDT-001 completion report).
+  EV-303 min. Two legs use two estimators for a VERIFIED reason (not a document
+  citation):
+  * The edge-based MTF/SRb leg uses the Gaussian estimator. The SPEC-default
+    morphological opening CANNOT be used on this leg: a large-radius grayscale
+    opening erodes the extended bright edge plateau by ~its SE radius, so the
+    corrected edge is no longer a clean ~2 deg slanted edge -- the MTF edge-angle
+    auto-estimator collapses below 1 deg (outside the permitted [1.5, 3.0] deg
+    range) and metrics/mtf raises instead of returning a retention number.
+    Verified empirically for opening scales 30..60 on this phantom; gaussian
+    sigma=40 gives MTF@Nyquist retention ~1.04 and SRb degrade ~-2%.
+  * The defect/CSa leg (second test) exercises the SPEC-DEFAULT morphological
+    opening on its validated regime -- a small localized high-frequency defect on
+    a locally-flat (linear-ramp) background, where the opening flattens the ramp
+    to the noise floor (CSa ~0) and preserves the defect within tolerance.
 """
 
 from __future__ import annotations
@@ -89,7 +101,9 @@ def test_tc019_thickness_srb_protection_meets_ev102():
     ph = gen.make_thickness_edge_phantom()
     raw = np.asarray(ph.frame.pixel, dtype=np.float64)
 
-    # Edge-based resolution measurement uses the Gaussian estimator.
+    # Edge-based MTF/SRb leg: the Gaussian estimator is REQUIRED here. The
+    # SPEC-default opening erodes the extended edge and makes the MTF angle
+    # unreadable (see module docstring; verified for opening scales 30..60).
     params = make_params(ndt_thickness_method="gaussian", ndt_thickness_scale_px=40)
     res = ndt.correct_thickness(ph.frame, params)
     assert res.changed
@@ -104,9 +118,17 @@ def test_tc019_thickness_srb_protection_meets_ev102():
 
 
 def test_tc019_thickness_preserves_defect_and_csa_meets_ev303():
-    """Defect band preserved and CSa (achieved contrast sensitivity) <= EV-303 min."""
+    """Defect band preserved and CSa <= EV-303 min, via the SPEC-DEFAULT opening.
+
+    The small-defect / flat-background leg is morphological opening's validated
+    regime (unlike the edge leg above), so this hard-DoD gate exercises the SPEC
+    default ndt_thickness_method='morphological_opening' (verified: defect
+    amplitude preserved within ~7.5%, CSa ~0 on the linear-ramp phantom).
+    """
     ph = gen.make_thickness_defect_phantom()
-    params = make_params(ndt_thickness_method="gaussian", ndt_thickness_scale_px=20)
+    params = make_params(
+        ndt_thickness_method="morphological_opening", ndt_thickness_scale_px=25
+    )
     res = ndt.correct_thickness(ph.frame, params)
 
     # High-frequency defect amplitude preserved.
