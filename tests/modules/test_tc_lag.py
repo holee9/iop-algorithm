@@ -15,21 +15,18 @@ from __future__ import annotations
 
 from metrics import lag as lag_metric
 from metrics.lag import P_BASELINE, P_EXPOSURE_END, P_MIN_EXPOSED
-from modules.lag import LagCorrector
 from pipeline.orchestrator import PipelineDefinition
 from pipeline.sequence import run_sequence
 from tests.metrics.phantoms.params import make_params
 from tests.modules.phantoms.lag_seq import (
     EV,
+    IRF_B,
     lag_calib,
+    lag_factory,
     lag_params,
     make_first_frame_lag_sequence,
     make_ghost_sequence,
 )
-
-
-def _lag_factory():
-    return {"lag": LagCorrector().process}
 
 
 def test_tc004_first_frame_lag_within_ev104_min():
@@ -38,7 +35,7 @@ def test_tc004_first_frame_lag_within_ev104_min():
     corrected = run_sequence(
         ph.measured_frames,
         PipelineDefinition(("lag",)),
-        _lag_factory,
+        lag_factory,
         {"lag": calib},
         {"lag": lag_params()},
     )
@@ -59,13 +56,14 @@ def test_tc004_first_frame_lag_within_ev104_min():
     assert after < before
 
 
-def test_tc005_ghost_cnr_reduced_partial_gate():
+def _ghost_before_after(calib):
+    """Run the ghost sequence through a lag correction and return (before, after)
+    corrected ghost residual CNR judged by the T1 engine."""
     ph = make_ghost_sequence(shape=(64, 64))
-    calib = lag_calib((64, 64))
     corrected = run_sequence(
         ph.measured_frames,
         PipelineDefinition(("lag",)),
-        _lag_factory,
+        lag_factory,
         {"lag": calib},
         {"lag": lag_params()},
     )
@@ -76,4 +74,30 @@ def test_tc005_ghost_cnr_reduced_partial_gate():
     after = lag_metric.compute_ghost_cnr(
         corrected[ph.ghost_index], ph.foreground_roi, ph.background_roi, params
     ).get("ghost_cnr")
+    return before, after
+
+
+def test_tc005_ghost_cnr_reduced_partial_gate():
+    """PARTIAL gate — EV-104 ghost "invisible" end-judgment depends on FB /
+    real-panel integration and stays deferred (spec decision 6). The synthetic
+    gate here asserts BOTH the SWR-402 relative reduction AND an externally
+    injected ABSOLUTE ceiling on the corrected ghost residual CNR, so a token
+    (relative-only) reduction cannot pass."""
+    calib = lag_calib((64, 64))
+    before, after = _ghost_before_after(calib)
+    # Relative leg: correction must reduce the ghost residual.
     assert after < before
+    # Absolute leg: corrected ghost CNR must fall below the injected EV ceiling.
+    assert after <= EV["ev104_ghost_cnr_max"], after
+
+
+def test_tc005_crippled_correction_fails_absolute_gate():
+    """RED demonstration: a deliberately crippled correction (epsilon IRF that
+    barely subtracts anything) still shows a microscopic relative reduction but
+    MUST fail the absolute ghost-CNR gate — proving the gate is not relative-only."""
+    crippled = lag_calib((64, 64), a=(1e-6, 1e-6, 1e-6), b=IRF_B)
+    before, after = _ghost_before_after(crippled)
+    # A token reduction still passes a relative-only check ...
+    assert after < before
+    # ... but the absolute EV ceiling rejects it (the correction is not real).
+    assert after > EV["ev104_ghost_cnr_max"]

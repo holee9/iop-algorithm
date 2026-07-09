@@ -36,16 +36,25 @@ from __future__ import annotations
 
 import numpy as np
 
-from common.calibset import CalibSet
+from common.calibset import K_IRF_A, K_IRF_B, CalibSet
 from common.contract import Params
 from common.xframe import HistoryEntry, MaskFlag, XFrame
 
 MODULE_NAME = "lag"
 MODULE_VERSION = "1.0.0"
 
-# CalibSet(LAG) data payload keys: the exponential-sum IRF coefficients ([B]).
-K_IRF_A = "irf_a"  # (M,) amplitudes a_i
-K_IRF_B = "irf_b"  # (M,) poles b_i (0 < b_i < 1 for a decaying afterglow)
+# CalibSet(LAG) data payload keys: re-exported from common.calibset (the single
+# source of truth) so existing importers (`from modules.lag import K_IRF_A`) and
+# the fixtures keep working while the literal lives in exactly one place.
+__all__ = [
+    "K_IRF_A",
+    "K_IRF_B",
+    "MODULE_NAME",
+    "MODULE_VERSION",
+    "LagCalibError",
+    "LagStateError",
+    "LagCorrector",
+]
 
 # State XFrame payload dtype is fixed to make serialize/load byte-identical
 # (spec decision 2). This mirrors common.xframe.PIXEL_DTYPE (float32).
@@ -95,6 +104,12 @@ class LagCorrector:
     def __init__(self) -> None:
         # None until the first frame fixes (M, ny, nx); then float32 (M,ny,nx).
         self._state: np.ndarray | None = None
+        # Independent float64 state, allocated only while validation mode is
+        # active (frame carries pixel_f64). Memory cost: a second (M,ny,nx)
+        # buffer at 8 bytes/elem — 2x the float32 state footprint — accepted so
+        # the validation path measures true float64 precision, not the float32
+        # path's accumulated quantization (REQ-LAG-VALIDATE / plan section 7).
+        self._state_f64: np.ndarray | None = None
 
     # -- correction --------------------------------------------------------
 
@@ -124,34 +139,36 @@ class LagCorrector:
         a3 = a[:, None, None]
         b3 = b[:, None, None]
 
-        def _correct(image: np.ndarray, protect: np.ndarray) -> np.ndarray:
-            # I_hat[k] = I[k] - sum_i s_i[k]. State s_i[k] carried into this call.
-            state = self._state.astype(np.float64)
-            lag_sum = state.sum(axis=0)
-            i_hat = image - lag_sum
-            # SATURATION pixel output preserved (REQ-LAG-CORR-5) but the state
-            # recursion below advances every pixel with the CALCULATED i_hat.
-            out = np.where(protect, image, i_hat)
-            # Advance to s_i[k+1] = b_i * (s_i[k] + a_i * I_hat[k]) (all pixels).
-            self._state = (b3 * (state + a3 * i_hat[None, :, :])).astype(STATE_DTYPE)
-            return out
-
         masks_u8 = np.asarray(frame.masks, dtype=np.uint8)
         protect = (masks_u8 & np.uint8(MaskFlag.SATURATION)) != 0
 
-        # Authoritative float32 path drives the (serialized) state. A validation
-        # float64 buffer, when present, is corrected with the same state sum
-        # snapshot (sequence-axis state threading is separate from the per-stage
-        # validation buffer, plan section 7); it does not re-advance state.
-        image_f64 = np.asarray(frame.pixel, dtype=np.float64)
-        state_snapshot = self._state.astype(np.float64).sum(axis=0)
-        out_pixel = _correct(image_f64, protect).astype(frame.pixel.dtype)
+        # -- authoritative float32 path (drives the serialized state) ---------
+        # I_hat[k] = I[k] - sum_i s_i[k]; then advance
+        # s_i[k+1] = b_i * (s_i[k] + a_i * I_hat[k]) (SWR-402, all pixels).
+        state32 = self._state.astype(np.float64)
+        lag_sum32 = state32.sum(axis=0)
+        image32 = np.asarray(frame.pixel, dtype=np.float64)
+        i_hat32 = image32 - lag_sum32
+        # SATURATION output preserved (REQ-LAG-CORR-5); the recursion below still
+        # advances that pixel with the CALCULATED I_hat so state stays physical.
+        out32 = np.where(protect, image32, i_hat32)
+        self._state = (b3 * (state32 + a3 * i_hat32[None, :, :])).astype(STATE_DTYPE)
+        out_pixel = out32.astype(frame.pixel.dtype)
 
+        # -- parallel float64 validation path (independent precision) ---------
+        # When a validation buffer is present, run a SEPARATE float64 state
+        # recursion (self._state_f64) rather than reusing the float32-quantized
+        # state snapshot, so the validation buffer reflects true float64
+        # precision (defect: f64 must not inherit float32 quantization).
         out_f64: np.ndarray | None = None
         if frame.pixel_f64 is not None:
+            if self._state_f64 is None:
+                self._state_f64 = np.zeros((m_terms, *shape), dtype=np.float64)
+            lag_sum64 = self._state_f64.sum(axis=0)
             vimg = np.asarray(frame.pixel_f64, dtype=np.float64)
-            vhat = vimg - state_snapshot
+            vhat = vimg - lag_sum64
             out_f64 = np.where(protect, vimg, vhat)
+            self._state_f64 = b3 * (self._state_f64 + a3 * vhat[None, :, :])
 
         new = frame.with_pixel(out_pixel, out_f64)
         entry = HistoryEntry(
@@ -185,10 +202,23 @@ class LagCorrector:
         return XFrame(pixel=state, masks=masks)
 
     def load_state(self, frame: XFrame) -> None:
-        """Restore {s_i} from an (M, ny, nx) float32 state XFrame."""
-        state = np.asarray(frame.pixel, dtype=STATE_DTYPE)
-        if state.ndim != 3:
+        """Restore {s_i} from an (M, ny, nx) float32 state XFrame.
+
+        The pixel buffer is validated (no silent cast): the dtype MUST already
+        be STATE_DTYPE (float32) so the round-trip stays byte-identical, and the
+        rank MUST be 3. The first-dim / M agreement is verified in process()
+        against the frame geometry (calib M is not known at load time); a
+        mismatch there raises LagStateError naming expected vs got.
+        """
+        pixel = frame.pixel
+        if pixel.dtype != STATE_DTYPE:
             raise LagStateError(
-                f"lag: state XFrame pixel must be (M, ny, nx); got ndim {state.ndim}"
+                f"lag: state XFrame pixel dtype must be {np.dtype(STATE_DTYPE)}; "
+                f"got {pixel.dtype} (no silent cast — serialize_state emits "
+                f"{np.dtype(STATE_DTYPE)} for a byte-identical round-trip)"
             )
-        self._state = np.array(state, dtype=STATE_DTYPE)
+        if pixel.ndim != 3:
+            raise LagStateError(
+                f"lag: state XFrame pixel must be (M, ny, nx); got ndim {pixel.ndim}"
+            )
+        self._state = np.array(pixel, dtype=STATE_DTYPE)

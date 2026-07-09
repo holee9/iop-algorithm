@@ -30,11 +30,16 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import least_squares
 
-from common.calibset import CalibKind, CalibProvenance, CalibSet
+from common.calibset import K_IRF_A, K_IRF_B, CalibKind, CalibProvenance, CalibSet
 
-# modules.lag CalibSet(LAG) payload keys (kept in sync with modules.lag).
-K_IRF_A = "irf_a"
-K_IRF_B = "irf_b"
+# CalibSet(LAG) payload keys: re-exported from common.calibset (single source of
+# truth shared with modules.lag), so producer and consumer never drift.
+__all__ = ["K_IRF_A", "K_IRF_B", "StepResponse", "LagIRFCalibrationError", "fit_lag_irf"]
+
+# Default relative-RMS residual acceptance threshold [T]: the fit's residual RMS
+# normalized by the target RMS must fall below this, else the fit is rejected as
+# a failed calibration. Externalized as a fit_lag_irf argument (no hardcoding).
+DEFAULT_RMS_RESIDUAL_TOL = 0.05
 
 
 class LagIRFCalibrationError(ValueError):
@@ -75,12 +80,16 @@ def fit_lag_irf(
     created_at: str = "",
     source: str = "lag-irf-builder",
     max_nfev: int = 20000,
+    rms_residual_tol: float = DEFAULT_RMS_RESIDUAL_TOL,
 ) -> CalibSet:
     """Fit (a_i, b_i) from multi-exposure step responses -> CalibSet(LAG).
 
     Raises:
         LagIRFCalibrationError: fewer than 2 exposures (single-exposure ban,
-            SWR-401), or a non-positive amplitude / empty residual.
+            SWR-401), a non-positive amplitude / empty residual, or a fit that
+            fails to converge / whose relative-RMS residual exceeds
+            ``rms_residual_tol`` ([T]) — a degenerate/unfittable curve must
+            surface as an explicit error, never a silently bad CalibSet.
     """
     if len(step_responses) < 2:
         raise LagIRFCalibrationError(
@@ -120,12 +129,37 @@ def fit_lag_irf(
     fit = least_squares(
         _residuals, x0, bounds=(lower, upper), method="trf", max_nfev=max_nfev
     )
+
+    # Fit-quality gate: the least_squares result must not be used unconditionally.
+    # A non-successful status or a residual that stays large (relative to the
+    # target RMS) means the exponential-sum model did not capture the curve —
+    # reject with diagnostics instead of emitting a bad CalibSet.
+    final_residuals = np.asarray(_residuals(fit.x), dtype=np.float64)
+    rms_residual = float(np.sqrt(np.mean(final_residuals**2)))
+    rms_target = float(np.sqrt(np.mean(y_all**2)))
+    rel_rms = rms_residual / rms_target if rms_target > 0 else float("inf")
+    if (not fit.success) or (not np.isfinite(rel_rms)) or (rel_rms > rms_residual_tol):
+        raise LagIRFCalibrationError(
+            "lag IRF: fit did not converge to an acceptable exponential-sum "
+            f"model (success={fit.success}, status={fit.status}, "
+            f"relative_rms_residual={rel_rms:.4g} > tol={rms_residual_tol:.4g}); "
+            "the step-response curve is degenerate or not LTI-consistent"
+        )
+
     a_fit = fit.x[:m_terms]
     b_fit = fit.x[m_terms:]
     # Sort by descending pole for a stable, identifiable ordering.
     order = np.argsort(-b_fit)
     a_fit = a_fit[order]
     b_fit = b_fit[order]
+
+    # Embed fit-quality metrics in provenance (IEC 62304 traceability): a later
+    # consumer/auditor can read how well the emitted IRF fit its calibration.
+    quality_note = (
+        f"lag-irf fit: status={fit.status}, cost={float(fit.cost):.4g}, "
+        f"rel_rms_residual={rel_rms:.4g}, tol={rms_residual_tol:.4g}, "
+        f"m_terms={m_terms}, n_exposures={len(step_responses)}"
+    )
 
     return CalibSet(
         panel_id=panel_id,
@@ -137,5 +171,7 @@ def fit_lag_irf(
             K_IRF_A: a_fit.astype(np.float32),
             K_IRF_B: b_fit.astype(np.float32),
         },
-        provenance=CalibProvenance(created_at=created_at, source=source),
+        provenance=CalibProvenance(
+            created_at=created_at, source=source, note=quality_note
+        ),
     )

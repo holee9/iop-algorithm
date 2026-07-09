@@ -8,21 +8,19 @@ engine metrics.lag alongside the lag module (CONTRACT-3).
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from modules import offset as offset_mod
 from modules.lag import LagCorrector
 from pipeline.orchestrator import PipelineDefinition
-from pipeline.sequence import NoOpFBTrigger, run_sequence
+from pipeline.sequence import FBTriggerError, NoOpFBTrigger, run_sequence
 from tests.modules.phantoms.corrections import corr_params, offset_calib
 from tests.modules.phantoms.lag_seq import (
     lag_calib,
+    lag_factory,
     lag_params,
     make_matched_sequence,
 )
-
-
-def _lag_factory():
-    return {"lag": LagCorrector().process}
 
 
 def test_scenario3_sequence_threads_state():
@@ -35,7 +33,7 @@ def test_scenario3_sequence_threads_state():
     params_map = {"lag": lag_params()}
 
     outs = run_sequence(
-        ph.measured_frames, definition, _lag_factory, calib_map, params_map
+        ph.measured_frames, definition, lag_factory, calib_map, params_map
     )
 
     # Equivalent to a manually threaded single instance.
@@ -59,8 +57,8 @@ def test_ec5_reset_between_sequences():
     seq_a = [new_frame(x) for x in strong]
     seq_b = [new_frame(np.full(shape, 1000.0, dtype=np.float32)) for _ in range(3)]
 
-    run_sequence(seq_a, definition, _lag_factory, calib_map, params_map)
-    outs_b = run_sequence(seq_b, definition, _lag_factory, calib_map, params_map)
+    run_sequence(seq_a, definition, lag_factory, calib_map, params_map)
+    outs_b = run_sequence(seq_b, definition, lag_factory, calib_map, params_map)
 
     # First frame of sequence B is uncorrected (state reset to zero).
     assert np.allclose(outs_b[0].pixel, 1000.0)
@@ -87,7 +85,7 @@ def test_scenario7_fb_trigger_handshake_mock():
     run_sequence(
         ph.measured_frames,
         PipelineDefinition(("lag",)),
-        _lag_factory,
+        lag_factory,
         {"lag": calib},
         {"lag": lag_params()},
         fb_trigger=fb,
@@ -95,6 +93,30 @@ def test_scenario7_fb_trigger_handshake_mock():
     assert fb.requested == 1 and fb.confirmed == 1
     # Default trigger is a harmless no-op.
     assert NoOpFBTrigger().confirm() is True
+
+
+def test_fb_confirm_failure_raises_not_silently_ignored():
+    """A falsy confirm() must abort the sequence with a named error instead of
+    being silently discarded."""
+
+    class FailingFB:
+        def request(self):
+            return None
+
+        def confirm(self):
+            return False
+
+    ph = make_matched_sequence(shape=(4, 4), n_frames=2)
+    calib = lag_calib((4, 4), ph.a, ph.b)
+    with pytest.raises(FBTriggerError, match="frame index 0"):
+        run_sequence(
+            ph.measured_frames,
+            PipelineDefinition(("lag",)),
+            lag_factory,
+            {"lag": calib},
+            {"lag": lag_params()},
+            fb_trigger=FailingFB(),
+        )
 
 
 def test_full_chain_offset_then_lag_integration():

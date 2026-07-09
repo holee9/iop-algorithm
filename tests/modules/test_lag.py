@@ -219,3 +219,89 @@ def test_load_state_rejects_non_3d():
     lag = LagCorrector()
     with pytest.raises(LagStateError):
         lag.load_state(new_frame(np.zeros((4, 4), dtype=np.float32)))
+
+
+def test_load_state_rejects_wrong_dtype_no_silent_cast():
+    """REQ-LAG-STATE: load_state must reject a non-float32 state buffer naming the
+    dtype, never silently cast (byte-identical round-trip contract). Exercised via
+    a state-like stand-in because XFrame itself always normalizes pixel to
+    float32 — the guard is defence-in-depth against a non-normalized buffer."""
+    from types import SimpleNamespace
+
+    lag = LagCorrector()
+    bad = SimpleNamespace(pixel=np.zeros((3, 4, 4), dtype=np.float64))
+    with pytest.raises(LagStateError, match="float64"):
+        lag.load_state(bad)
+
+
+def test_validation_f64_path_is_independent_precision():
+    """Defect regression: over a long sequence the validation float64 buffer must
+    be driven by its OWN float64 state recursion, not the float32-quantized state
+    — so it matches a pure-float64 reference exactly while the float32 path drifts."""
+    shape = (8, 8)
+    a, b = (0.030, 0.020, 0.010), (0.50, 0.80, 0.90)
+    calib = lag_calib(shape, a, b)
+    params = lag_params()
+
+    # Large-magnitude frames so float32 state accumulation is visibly quantized.
+    rng = np.random.default_rng(3)
+    n_frames = 40
+    inputs = [
+        (30000.0 + rng.uniform(-4000.0, 4000.0, size=shape)).astype(np.float64)
+        for _ in range(n_frames)
+    ]
+
+    lag = LagCorrector()
+    got_f32: list[np.ndarray] = []
+    got_f64: list[np.ndarray] = []
+    for img in inputs:
+        frame = new_frame(img.astype(np.float32), validation_mode=True)
+        out = lag.process(frame, calib, params)
+        got_f32.append(np.asarray(out.pixel, dtype=np.float64))
+        assert out.pixel_f64 is not None
+        got_f64.append(np.asarray(out.pixel_f64, dtype=np.float64))
+
+    # Independent pure-float64 reference over the SAME float64 input the
+    # validation buffer saw (new_frame casts pixel to float64 for pixel_f64), and
+    # the SAME float32-rounded IRF coefficients the CalibSet(LAG) actually carries.
+    a_arr = np.asarray(a, dtype=np.float32).astype(np.float64)[:, None, None]
+    b_arr = np.asarray(b, dtype=np.float32).astype(np.float64)[:, None, None]
+    state = np.zeros((len(a), *shape), dtype=np.float64)
+    ref: list[np.ndarray] = []
+    for img in inputs:
+        img64 = img.astype(np.float32).astype(np.float64)  # what pixel_f64 holds
+        lag_sum = state.sum(axis=0)
+        i_hat = img64 - lag_sum
+        ref.append(i_hat)
+        state = b_arr * (state + a_arr * i_hat[None, :, :])
+
+    err_f64 = max(float(np.max(np.abs(g - r))) for g, r in zip(got_f64, ref))
+    err_f32 = max(float(np.max(np.abs(g - r))) for g, r in zip(got_f32, ref))
+
+    # The float64 path reproduces the reference exactly (independent recursion);
+    # the float32 path accumulates quantization and drifts measurably further.
+    assert err_f64 == 0.0
+    assert err_f32 > err_f64
+
+
+def test_stateful_harness_converts_m_mismatch_prestate_to_report():
+    """Defect regression: a module exception during load_state (M-mismatch
+    pre-state) must surface as a MismatchReport, not escape as a traceback."""
+    shape = (4, 4)
+    calib = lag_calib(shape, (0.030, 0.020, 0.010), (0.50, 0.80, 0.90))  # M=3
+    params = lag_params()
+    frame = new_frame(np.full(shape, 2000.0, dtype=np.float32))
+
+    # Pre-state with M=2 (mismatched against the calib's M=3): load_state accepts
+    # it, then process raises LagStateError on the geometry check.
+    bad_state = XFrame(
+        pixel=np.zeros((2, *shape), dtype=np.float32),
+        masks=np.zeros((2, *shape), dtype=np.uint8),
+    )
+
+    lag = LagCorrector()
+    report = run_stateful_harness(
+        lag, frame, calib, params, frame, pre_state=bad_state
+    )
+    assert report.passed is False
+    assert any("LagStateError" in v or "process raised" in v for v in report.violations)

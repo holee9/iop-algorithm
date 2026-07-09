@@ -25,6 +25,7 @@ orchestrator precedent).
 
 from __future__ import annotations
 
+import logging
 from typing import Callable, Mapping, Protocol, Sequence, runtime_checkable
 
 from common.calibset import CalibSet
@@ -40,6 +41,18 @@ from pipeline.orchestrator import (
 # it per sequence is what expresses the reset: a new lag instance starts at
 # s_i[-1] = 0 (REQ-LAG-STATE-4).
 RegistryFactory = Callable[[], Mapping[str, ProcessCallable]]
+
+_LOG = logging.getLogger(__name__)
+
+
+class FBTriggerError(RuntimeError):
+    """Raised when the forward-bias trigger fails to confirm before capture.
+
+    A failed FB confirmation means the panel firmware did not acknowledge the
+    forward-bias request (SWR-404); proceeding would run the lag correction over
+    an unprepared capture sequence, so it is a hard error naming the sequence
+    position rather than a silently ignored return value.
+    """
 
 
 @runtime_checkable
@@ -98,9 +111,19 @@ def run_sequence(
         the per-frame output XFrames, in capture order.
     """
     trigger = fb_trigger if fb_trigger is not None else NoOpFBTrigger()
-    # FB is requested before the capture sequence begins (REQ-LAG-CORR-3).
+    # FB is requested and MUST be confirmed before the capture sequence begins
+    # (REQ-LAG-CORR-3). The confirm() return value is authoritative: a falsy
+    # result means the FB handshake failed and the sequence must not proceed.
     trigger.request()
-    trigger.confirm()
+    fb_confirmed = trigger.confirm()
+    if not fb_confirmed:
+        raise FBTriggerError(
+            "FB trigger confirmation failed before capture sequence start "
+            "(frame index 0); aborting lag sequence — the panel did not "
+            "acknowledge the forward-bias request (SWR-404)"
+        )
+    # Runner-level record of the FB handshake outcome (audit trail).
+    _LOG.info("FB trigger confirmed before capture sequence (frames=%d)", len(frames))
 
     # One registry (one stateful lag instance) for the whole sequence.
     registry = registry_factory()

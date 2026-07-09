@@ -75,6 +75,44 @@ def test_ec2_single_exposure_rejected():
         )
 
 
+def test_fit_quality_metrics_recorded_in_provenance():
+    """A successful fit embeds its fit-quality diagnostics in CalibSet
+    provenance (traceability)."""
+    calib = fit_lag_irf(
+        _known_step_responses(),
+        m_terms=3,
+        panel_id="PANEL-A",
+        resolution=(8, 8),
+        valid_from="2026-01-01",
+        valid_until="2027-01-01",
+    )
+    assert calib.provenance is not None
+    assert "rel_rms_residual" in calib.provenance.note
+
+
+def test_unfittable_input_raises_not_bad_calibset():
+    """A degenerate/noise-dominated step response the exponential-sum model
+    cannot fit must raise LagIRFCalibrationError with diagnostics, never emit a
+    silently bad CalibSet."""
+    rng = np.random.default_rng(0)
+    # Pure noise residuals (no decaying exponential structure) at several
+    # exposures — the LTI premise is violated, so the fit cannot converge to an
+    # acceptable relative-RMS residual.
+    responses = [
+        StepResponse(amplitude=amp, residual=rng.normal(0.0, 1.0, size=12))
+        for amp in (1000.0, 2500.0, 4000.0)
+    ]
+    with pytest.raises(LagIRFCalibrationError, match="relative_rms_residual"):
+        fit_lag_irf(
+            responses,
+            m_terms=3,
+            panel_id="PANEL-A",
+            resolution=(8, 8),
+            valid_from="2026-01-01",
+            valid_until="2027-01-01",
+        )
+
+
 def test_scenario6_fit_then_correct_round_trip():
     """Fitted CalibSet(LAG) drives the correction and recovers the true seq."""
     ph = make_matched_sequence(shape=(8, 8), n_frames=6, a=IRF_A, b=IRF_B)

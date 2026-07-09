@@ -18,10 +18,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from common.calibset import CalibKind, CalibProvenance, CalibSet
+from common.calibset import K_IRF_A, K_IRF_B, CalibKind, CalibProvenance, CalibSet
 from common.contract import Params
 from common.xframe import new_frame
-from modules.lag import K_IRF_A, K_IRF_B
+from modules.lag import LagCorrector
 
 # Known synthetic IRF ([B] in production; injected here). M = 3 (SWR-401 M=3..4).
 IRF_A = (0.030, 0.020, 0.010)
@@ -31,7 +31,21 @@ IRF_B = (0.50, 0.80, 0.90)
 # engine outputs against these — the module/engine never embed them.
 EV = {
     "ev104_first_frame_lag_min_pct": 5.0,  # after-correction first-frame lag <= 5%
+    # Absolute corrected-ghost residual CNR ceiling (XDET-EV-104 ghost leg). A
+    # matched-IRF correction drives ghost CNR to ~noise floor (<<1); this ceiling
+    # is comfortably above that yet well below the uncorrected/crippled residual
+    # (~39), so it distinguishes a real correction from a token one.
+    "ev104_ghost_cnr_max": 2.0,
 }
+
+
+def lag_factory():
+    """Registry factory yielding a fresh stateful lag instance per sequence.
+
+    Hoisted here (shared by the sequence-runner and TC-004/005 gate tests) so the
+    factory is defined once rather than copy-pasted per test module.
+    """
+    return {"lag": LagCorrector().process}
 
 
 def lag_calib(
