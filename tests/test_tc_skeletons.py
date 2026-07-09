@@ -45,9 +45,10 @@ _SKELETONS = [
     # TC-011 (VST round-trip unbiasedness) are the T5/WP5 release gates; they are
     # now LIVE in tests/modules/test_tc_denoise.py and therefore removed from this
     # deferred list.
-    ("XDET-TC-012", "MSE / DRC (T6/WP6)"),
-    ("XDET-TC-013", "auto-windowing / GSDF (T6/WP7)"),
-    ("XDET-TC-014", "GSDF LUT (T6/WP7)"),
+    # TC-012 (MSE/DRC IQA non-degradation), TC-013 (auto-window fit rate) and
+    # TC-014 (GSDF LUT PS3.14 conformance, hard DoD) are the T6/WP6+WP7 release
+    # gates; they are now LIVE in tests/modules/test_tc_post.py and therefore
+    # removed from this deferred list.
     ("XDET-TC-015", "grid-line suppression, observed-peak search (T7/WP8)"),
     ("XDET-TC-016", "grid density classes (T7/WP8)"),
     ("XDET-TC-017", "kernel virtual grid / SKS (T8/WP9)"),

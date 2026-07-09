@@ -78,6 +78,8 @@ modules = [
     "modules.saturation",
     "modules.geometry",
     "modules.denoise",
+    "modules.mse",
+    "modules.window",
 ]
 
 [[tool.importlinter.contracts]]

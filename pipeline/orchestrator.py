@@ -9,7 +9,7 @@ calibration-refusal gate are safety-critical invariants (SWR-000-5).
 
 Order (REQ-INFRA-ORCH-3):
     offset -> gain -> defect -> lag -> line_noise -> saturation -> geometry
-        -> denoise -> post
+        -> denoise -> mse -> window -> post
 
 Entry gate (REQ-INFRA-ORCH-4): a missing or mismatched CalibSet (resolution /
 panel_id) causes refusal with an explicit error. Defaults are NEVER substituted
@@ -40,6 +40,15 @@ CANONICAL_ORDER: tuple[str, ...] = (
     # CANONICAL_ORDER, so inserting a stage is backward-compatible with pipelines
     # that do not register it.
     "denoise",
+    # Dedicated display post-processing stages between denoise and post
+    # (SPEC-POST-001 decision 1): mse (WP6 multi-scale enhancement + DRC) then
+    # window (WP7 auto-windowing + GSDF). Both are added as a subsequence of
+    # CANONICAL_ORDER, so pipelines that do not register them are unaffected
+    # (SPEC-DENOISE-001 precedent). Neither is wired in _KIND_BY_STAGE: they have
+    # no detector calibration and satisfy the entry gate with CalibSet(OTHER), an
+    # empty placeholder (decision 2). `post` remains a reserved tail.
+    "mse",
+    "window",
     "post",
 )
 
