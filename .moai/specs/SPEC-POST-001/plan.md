@@ -28,7 +28,7 @@ T6(WP6 MSE/DRC + WP7 자동 윈도잉/GSDF). `modules/mse.py`·`modules/window.p
 
 ### M1 — 공용 컴포넌트 구현 (Priority: High)
 - `common/pyramid.py`: T0 스텁 `build_pyramid`를 Gaussian(5×5 [1 4 6 4 1]/16)/Laplacian 분해 + reconstruct로 구현(SWR-801, `mse` 최초 소비자, SWR-000-9 ①). L레벨 파라미터화([T]).
-- `common/histogram_fov.py`: 조사야(collimation field) 인식·직접선(direct exposure) 분리 확장(SWR-901, `window` 소비, SWR-000-9 ②; T1 detect_fov "richer collimation model은 T6로 이연" 실현).
+- `common/histogram_fov.py`: 조사야(collimation field) 인식·직접선(direct exposure) 분리 확장(SWR-901, `window` 소비, SWR-000-9 ②; SWR-000-9 첫-소비자 이연 원칙에 따른 T6 확장).
 - 대응: REQ-POST-MSE-1, REQ-POST-WINDOW-1.
 
 ### M2 — MSE 모듈: 대역 변조 + 노이즈 게이팅 (Priority: High)
