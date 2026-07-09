@@ -1,7 +1,7 @@
 ---
 id: SPEC-DENOISE-001
-version: 0.1.1
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-07-09
 updated: 2026-07-09
 author: drake.lee
@@ -19,6 +19,12 @@ XDET 영상처리 SW P1의 여섯 번째 작업 T5(WP5). 분산 안정화 변환
 - 구현 계획: [plan.md](./plan.md) · 인수 기준: [acceptance.md](./acceptance.md)
 
 ## HISTORY
+
+- **v0.2.0 (2026-07-09)** — 구현 완료(status: implemented). 커밋 0c2927b(denoise/noise_model/스테이지 신설) + 리뷰 결함 10건 수정. 224 passed / 10 skipped(2회 동일), 계약 5건 KEPT. 확정:
+  - 역변환 LUT는 도메인 커버리지 검증(λ_max 초과 시 명시 오류, 조용한 클램프 금지), 2차 간격 노드로 16-bit 전역 커버.
+  - BM3D 하드 임계는 DC 계수 비임계(그룹 평균 보존), 마스크 픽셀 값은 block-median 충전 후 적층(경계 bleed 차단).
+  - XDET-TC-011은 변환 도메인 exact-inverse 속성 + 출하 경로(픽셀별 역변환) e2e 이중 게이트(ε_unbias_e2e [T]).
+  - 프리셋 {0.6,0.8,1.0} 전부 EV-102 게이트 — 0.6의 초기 '실패'는 MTF 추정기 아티팩트로 판명(재측정 0.9526 PASS).
 
 - **v0.1.1 (2026-07-09)** — plan-audit iter1(FAIL 0.78, D1~D8 + BLOCK 후보 3건) 반영 개정. run-blocking 「결정 필요/확인 사항」 1·2·3을 orchestrator 결정으로 확정하고(확인 5는 결정 2에 종속 확정), D1~D8 결함을 해소했다.
   1. **결정 1 확정(스테이지 배치)**: `CANONICAL_ORDER`에 전용 `denoise` 스테이지를 `geometry`와 `post` 사이에 신설한다(`… → geometry → denoise → post`). **rationale**: 오케스트레이터의 등록 stages = `CANONICAL_ORDER` 부분수열 검증이 스테이지 신설을 하위호환(하류 미등록 SPEC 무영향)으로 만들고, WP별 개별 스테이지 선례(line_noise/saturation/geometry)를 따르며, denoise 전용 CalibSet를 자체 종류-단계로 배선할 수 있다.
