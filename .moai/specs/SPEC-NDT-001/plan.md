@@ -1,7 +1,7 @@
 ---
 id: SPEC-NDT-001
 title: T9 WP10 NDT (실시간 SNRn 적산 · IQI 자동 판독 · 두께 보정)
-version: 0.1.0
+version: 0.1.1
 status: draft
 created: 2026-07-09
 updated: 2026-07-09
@@ -33,6 +33,14 @@ XDET P1의 열 번째 작업 T9. NDT 검사 성적 산출 능력 WP10(SWR-1201~1
 | 파라미터 | 88.6µm[S]·20% dip[S]·두께 스케일[T]·SNRn 목표/Class[S]/[P]·허용오차[T] = Params 외부화 | CLAUDE.md 파라미터 정책 |
 
 원칙: **정확도 단일 목표, 속도 최적화 금지.** 하드코딩 금지. EV 판정 수치 미내장(측정=판정 분리). T0 표면 불변(결정 1).
+
+### 두께 보정 기법 선택 (`thickness_method`, REQ-NDT-THICK-1 HOW)
+
+Params `thickness_method`(문자열, 기본값 `"morphological_opening"`)로 두 기법 중 단일 경로를 결정론적으로 선택한다(SWR-1203 이접 조항의 단일 소스화):
+- `"morphological_opening"`(기본) — 대구경 원형 structuring element(반경 = Params `thickness_scale_px` [T])로 grayscale opening, 저주파 두께 프로파일을 산출. 결함(고역, 좁은 구조)은 opening 반경보다 작아 보존됨.
+- `"gaussian"` — 대형 Gaussian σ(= Params `thickness_scale_px` [T])로 저역 통과, 동일 프로파일을 산출. opening 대비 부드러운 profile이나 경계에서 링잉 가능.
+
+두 경로 모두 출력은 "저주파 두께 프로파일"(감산 대상)이며, 나머지 처리(감산·고역 보존 검증)는 기법 무관 동일 경로. 알 수 없는 `thickness_method` 값은 명시 오류(REQ-NDT-CONTRACT-3 하드코딩 금지 정책과 별개로, 유효값 검증은 구현 방어 규칙).
 
 ## 3. 모듈 분해 (metrics/ · common/ 확장 — 신규 파일 없이 T1 확장 우선)
 
