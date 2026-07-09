@@ -67,12 +67,20 @@ class Tier(IntEnum):
 
 
 class TierDecisionError(RuntimeError):
-    """Raised on an invalid/missing capability descriptor, a missing/unsatisfiable
-    tier policy, or a forced UPGRADE request.
+    """The single explicit error type raised by every guarded path in this module.
 
-    A single deterministic error path — never a silent threshold guess, a quiet
-    substitution of the lowest tier, or an unauthorized promotion (SWR-1301
-    강제 상향 금지; EC-3).
+    Raise sites (all deterministic — never a silent threshold guess, a quiet
+    substitution of the lowest tier, or an unauthorized promotion; SWR-1301
+    강제 상향 금지, EC-3):
+      - an invalid/missing capability descriptor (`decide_tier` via
+        `_validate_capability`);
+      - an invalid `params` container — None or not a `Params` — so the injected
+        capability->tier policy is unreachable (`decide_tier`);
+      - a missing / empty / unsatisfiable tier policy (`decide_tier` /
+        `_detect_tier`);
+      - an invalid `forced_tier` type or a forced UPGRADE request (`decide_tier`);
+      - no pipeline variant registered for the requested tier (`select_pipeline`);
+      - `warm_runs` < 1 for the timing harness (`time_tier`).
     """
 
 
@@ -250,6 +258,12 @@ def decide_tier(
     """
     _validate_capability(capability)
     assert capability is not None  # narrowed by _validate_capability
+    if not isinstance(params, Params):
+        raise TierDecisionError(
+            f"params must be a Params container, got {type(params)!r}; the "
+            "capability->tier policy is injected through it and cannot be read "
+            "(SWR-1301, REQ-TIER-CONTRACT-3)"
+        )
     policy = params.get(TIER_POLICY_KEY)
     if not policy:
         raise TierDecisionError(

@@ -17,6 +17,8 @@ these gates. The comments below record where each converted TC now lives.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 # (TC id, short reason / owning work package). Mirrors CLAUDE.md T1..T10 DoDs and
 # the VV -> WP mapping in docs/XDET_TestSpec_v1.0.md.
 #
@@ -74,9 +76,69 @@ _SKELETONS = [
 ]
 
 
+# Full Gen 1 release-gate range: XDET-TC-000 .. XDET-TC-021 (inclusive).
+_GEN1_TC_RANGE = range(0, 22)
+
+# TC ids inside the Gen 1 range that are intentionally NOT live-tested in P1, each
+# mapped to a documented reason. Empty at T10: every XDET-TC-000..021 is live (P1
+# golden-model shape-freeze). Gen 2 items (DL path SWR-1303, ADR) fall OUTSIDE this
+# range and are not tracked here. Adding an entry here is the ONLY sanctioned way to
+# drop a TC from live coverage — a bare removal makes the capstone fail loudly.
+_DEFERRED_GEN1_TC: dict[str, str] = {}
+
+# This registry file references TC ids in its own bookkeeping docstring/comments;
+# those references must NOT count as a live test, so the scan excludes this file.
+_REGISTRY_FILE = Path(__file__).resolve()
+
+
+def _live_tc_ids() -> set[str]:
+    """Zero-padded TC ids (e.g. '016') referenced in any test source EXCEPT this
+    registry file.
+
+    Accepts the id forms actually used across the suite (case-insensitive):
+    'XDET-TC-016' and 'TC-016' (docstrings / comments / section headers) and the
+    'tc_016' function-name style. A TC is 'live' when it is named anywhere outside
+    this registry — proving a real converted test carries it.
+    """
+    tests_root = _REGISTRY_FILE.parent
+    chunks: list[str] = []
+    for py in sorted(tests_root.rglob("*.py")):
+        if py.resolve() == _REGISTRY_FILE:
+            continue
+        chunks.append(py.read_text(encoding="utf-8").lower())
+    corpus = "\n".join(chunks)
+    live: set[str] = set()
+    for n in _GEN1_TC_RANGE:
+        tc = f"{n:03d}"
+        if f"tc-{tc}" in corpus or f"tc_{tc}" in corpus:
+            live.add(tc)
+    return live
+
+
 def test_all_gen1_tc_skeletons_are_live():
     """P1 capstone (SPEC-TIER-001 VALIDATE-4): no deferred Gen 1 TC skeleton
-    remains. TC-020/021 — the last two — went live in tests/pipeline/test_tc_tier.py,
-    completing Gen 1 XDET-TC-000..021 (golden-model shape-freeze). Gen 2 items
-    (DL path SWR-1303, ADR) are intentionally out of P1 scope."""
+    remains AND every XDET-TC-000..021 id is backed by a real live test somewhere in
+    the suite (or is explicitly deferred-with-reason).
+
+    Strengthened per code-review finding #3: `_SKELETONS == []` alone could pass even
+    if a TC were silently dropped (converted to nothing), because it never checked
+    that each removed id actually has a corresponding live test elsewhere. The scan
+    below closes that gap — hiding/renaming a TC's only reference makes this fail.
+    Gen 2 items (DL path SWR-1303, ADR) are intentionally out of P1 scope."""
     assert _SKELETONS == []
+
+    # Deferred entries must each carry a non-empty reason (no silent deferral).
+    assert all(reason.strip() for reason in _DEFERRED_GEN1_TC.values()), (
+        "every _DEFERRED_GEN1_TC entry must document a reason"
+    )
+
+    live = _live_tc_ids()
+    missing = {
+        f"{n:03d}"
+        for n in _GEN1_TC_RANGE
+        if f"{n:03d}" not in live and f"{n:03d}" not in _DEFERRED_GEN1_TC
+    }
+    assert not missing, (
+        "Gen 1 TC id(s) neither live-tested nor deferred-with-reason "
+        f"(a TC was dropped without conversion): {sorted(missing)}"
+    )

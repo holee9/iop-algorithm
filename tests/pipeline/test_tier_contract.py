@@ -9,24 +9,25 @@ tier gating free of any EV grade (measurement != judgment).
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import inspect
-from pathlib import Path
+import typing
 
 import pytest
 
 from common.calibset import CalibKind
-from common.equivalence import EquivalenceDiff
-from pipeline import tier
+from common.equivalence import INTEGER_PATH_STAGES, EquivalenceDiff
 from pipeline.orchestrator import (
     CANONICAL_ORDER,
     CalibrationError,
+    PipelineDefinition,
     _KIND_BY_STAGE,
     run_pipeline,
 )
 from pipeline.tier import Tier, decide_tier, run_tier
+from tests.pipeline import tier_fixtures
 from tests.pipeline.frame_fixtures import (
+    _CALIB_KIND,
     passthrough_registry,
     std_frame,
 )
@@ -92,35 +93,66 @@ def test_equivalence_diff_shape_contract_unchanged():
     assert hasattr(EquivalenceDiff, "structurally_equal")
 
 
-# -- CONTRACT-2: layering (import-linter mirror as an in-suite structural check) --
+# -- CONTRACT-2: layering is enforced by import-linter (single source of truth) --
+#
+# The pipeline/tier.py "orchestrator + common only, never modules/metrics" ban and
+# the common/equivalence.py "pure common" ban are enforced declaratively by the
+# import-linter contracts in pyproject.toml (run via `uv run lint-imports`, part of
+# XDET-TC-000 decision engine B). A previous hand-rolled AST import scanner here
+# duplicated that enforcement and could drift from the linter config, so it was
+# removed in favour of the linter as the single source of truth (code-review
+# defect #6). The gap the AST test covered that the default "common is foundational"
+# contract did NOT — pipeline.tier must not import modules/metrics, whereas the
+# layers contract otherwise permits pipeline -> modules — is now closed by a
+# dedicated forbidden contract for pipeline.tier in pyproject.toml.
 
 
-def _imported_top_packages(py_path: str) -> set[str]:
-    tree = ast.parse(Path(py_path).read_text(encoding="utf-8"))
-    tops: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                tops.add(alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.level == 0:
-                tops.add(node.module.split(".")[0])
-    return tops
+# -- CONTRACT-5 (drift guard): INTEGER_PATH_STAGES must track the orchestrator ----
+
+# The SWR-1302 float-path calibrated stages: detector-calibrated (present in
+# _KIND_BY_STAGE) but NOT bit-exact integer arithmetic — lag is an exponential-sum
+# recursive FLOAT state, denoise is VST/BM3D FLOAT, virtual_grid is SKS scatter
+# FLOAT. Every other _KIND_BY_STAGE entry is the integer (bit-identical) path.
+_FLOAT_PATH_CALIBRATED_STAGES = {"lag", "denoise", "virtual_grid"}
 
 
-def test_equivalence_module_is_pure_common():
-    import common.equivalence as eq
+def test_integer_path_stages_track_orchestrator_wiring():
+    # common/equivalence.py keeps INTEGER_PATH_STAGES as literal strings because it
+    # is the foundational layer and must not import pipeline.orchestrator
+    # (import-linter forbidden edge). This tests/ module is allowed to import BOTH,
+    # so it is the place that guarantees the two never silently drift — a drift
+    # would otherwise downgrade a stage's equivalence check from bit-exact INTEGER
+    # to lenient FLOAT with no test failure (code-review defect #2).
+    derived = set(_KIND_BY_STAGE) - _FLOAT_PATH_CALIBRATED_STAGES
+    assert INTEGER_PATH_STAGES == derived
+    # Every integer-path stage must be a real canonical stage (catches a rename in
+    # orchestrator that equivalence.py failed to mirror).
+    assert INTEGER_PATH_STAGES <= set(CANONICAL_ORDER)
+    # And it must be exactly the SWR-1302 documented integer path.
+    assert INTEGER_PATH_STAGES == {"offset", "gain", "defect", "line_noise"}
 
-    tops = _imported_top_packages(eq.__file__)
-    assert "pipeline" not in tops
-    assert "modules" not in tops
-    assert "metrics" not in tops
+
+# -- Fixture derives its calib-kind wiring from the orchestrator (no drift) --------
 
 
-def test_tier_module_consumes_orchestrator_only():
-    tops = _imported_top_packages(tier.__file__)
-    assert "modules" not in tops
-    assert "metrics" not in tops
-    # It DOES depend on the orchestrator surface (pipeline) + common (downward).
-    assert "pipeline" in tops
-    assert "common" in tops
+def test_calib_kind_fixture_derived_from_orchestrator():
+    # frame_fixtures._CALIB_KIND must be derived from the orchestrator's
+    # _KIND_BY_STAGE (mapped to CalibKind), not a separate hand-written dict that
+    # can drift or omit a stage — it previously omitted 'lag' (code-review defect
+    # #4). Every wired stage is present and maps to the matching CalibKind.
+    assert set(_CALIB_KIND) == set(_KIND_BY_STAGE)
+    assert "lag" in _CALIB_KIND
+    for stage, kind_value in _KIND_BY_STAGE.items():
+        assert _CALIB_KIND[stage] == CalibKind(kind_value)
+
+
+# -- Fixture return annotation is a real, resolvable type (no suppressed noqa) -----
+
+
+def test_tier_variants_annotation_is_resolvable():
+    # tier_fixtures.tier_variants() previously annotated its return with an
+    # unresolvable quoted forward reference suppressed by `# noqa: F821`. The
+    # annotation must resolve to the real PipelineDefinition type (code-review
+    # defect #7) so get_type_hints does not raise NameError.
+    hints = typing.get_type_hints(tier_fixtures.tier_variants)
+    assert hints["return"] == dict[Tier, PipelineDefinition]

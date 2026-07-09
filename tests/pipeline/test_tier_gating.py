@@ -141,6 +141,43 @@ def test_missing_policy_raises_no_hardcoded_fallback():
         decide_tier(cap_tier2(), Params(values={}))
 
 
+def test_none_params_raises_tier_decision_error():
+    # A None params container must surface the module's documented
+    # TierDecisionError, never a bare AttributeError from params.get(...)
+    # (code-review defect #1: undocumented AttributeError on params=None).
+    with pytest.raises(TierDecisionError):
+        decide_tier(cap_tier2(), None)  # type: ignore[arg-type]
+
+
+def test_non_params_object_raises_tier_decision_error():
+    # A wrong-typed params (not a Params) is refused at the entry gate with the
+    # documented error — even when it carries an otherwise-valid policy that a
+    # duck-typed .get() would have happily consumed.
+    policy = (
+        TierRule(
+            tier=Tier.TIER1,
+            min_cpu_cores=1,
+            requires_avx=False,
+            requires_gpu=False,
+            min_vram_gb=0.0,
+        ),
+    )
+    with pytest.raises(TierDecisionError):
+        decide_tier(cap_tier2(), {TIER_POLICY_KEY: policy})  # type: ignore[arg-type]
+
+
+def test_tier_decision_error_docstring_covers_all_raise_sites():
+    # CONTRACT honesty (code-review defect #5): TierDecisionError is raised for
+    # causes beyond the original 3-cause list (warm_runs validation in time_tier,
+    # a missing pipeline variant in select_pipeline, an invalid params container).
+    # Its docstring must enumerate them so the contract is not silently wider than
+    # documented.
+    doc = TierDecisionError.__doc__ or ""
+    assert "warm_runs" in doc
+    assert "variant" in doc
+    assert "params" in doc
+
+
 def test_empty_policy_no_silent_lowest_tier():
     p = Params(values={TIER_POLICY_KEY: ()})
     with pytest.raises(TierDecisionError):

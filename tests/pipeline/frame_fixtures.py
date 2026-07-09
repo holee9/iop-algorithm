@@ -18,7 +18,7 @@ import numpy as np
 
 from common.calibset import CalibKind, CalibProvenance, CalibSet
 from common.xframe import XFrame, new_frame
-from pipeline.orchestrator import PipelineDefinition
+from pipeline.orchestrator import PipelineDefinition, _KIND_BY_STAGE
 from tests.fixtures import passthrough
 
 STD_SHAPE = (16, 16)
@@ -29,15 +29,13 @@ INT_DEF = PipelineDefinition(INT_STAGES)
 # Float-inclusive variant: geometry is a non-integer-path stage (+/-1 LSB target).
 FLOAT_DEF = PipelineDefinition(INT_STAGES + ("geometry",))
 
-# Test-side mirror of the orchestrator kind-vs-stage wiring, used only to build a
-# calib map that satisfies the (unchanged) entry gate for the passthrough runs.
+# Calib-kind wiring used only to build a calib map that satisfies the (unchanged)
+# entry gate for the passthrough runs. DERIVED from the orchestrator's own
+# stage->kind wiring (its string kind value -> CalibKind, since CalibKind is a str
+# Enum) so it can never drift from _KIND_BY_STAGE and automatically covers every
+# wired stage — including 'lag', which the previous hand-written mirror omitted.
 _CALIB_KIND: dict[str, CalibKind] = {
-    "offset": CalibKind.OFFSET,
-    "gain": CalibKind.GAIN,
-    "defect": CalibKind.DEFECT,
-    "line_noise": CalibKind.LINE_NOISE,
-    "denoise": CalibKind.NOISE,
-    "virtual_grid": CalibKind.SCATTER,
+    stage: CalibKind(kind_value) for stage, kind_value in _KIND_BY_STAGE.items()
 }
 
 

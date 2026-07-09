@@ -11,6 +11,7 @@ only, GPU-accelerated kernel is P2).
 from __future__ import annotations
 
 from common.contract import Params
+from pipeline.orchestrator import PipelineDefinition
 from pipeline.tier import NO_GPU, TIER_POLICY_KEY, Capability, Tier, TierRule
 from tests.pipeline.frame_fixtures import FLOAT_DEF, INT_DEF
 
@@ -46,6 +47,6 @@ def cap_tier1() -> Capability:
     return Capability(cpu_cores=2, avx=False, gpu_model=NO_GPU, vram_gb=0.0)
 
 
-def tier_variants() -> dict[Tier, "PipelineDefinition"]:  # noqa: F821
+def tier_variants() -> dict[Tier, PipelineDefinition]:
     """Per-tier execution-path variants (Tier 1 integer, Tier 2 float)."""
     return {Tier.TIER1: INT_DEF, Tier.TIER2: FLOAT_DEF}
