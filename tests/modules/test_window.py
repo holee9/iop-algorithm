@@ -154,12 +154,24 @@ def test_input_immutable_and_history_appended():
     assert len(out.history) == 1
 
 
-def test_saturation_preserved_and_masks_unchanged():
+def test_saturation_mapped_to_display_max_not_raw_dn():
     image, _, _ = make_region_phantom("CHEST", (3.0, 97.0))
     masks = np.zeros(image.shape, dtype=np.uint8)
     masks[3, 3] = int(MaskFlag.SATURATION)
     sat = image.copy()
     sat[3, 3] = 58000.0
-    out = _process(sat, window_params(window_region_code="CHEST"), masks=masks)
-    assert float(np.asarray(out.pixel)[3, 3]) == pytest.approx(58000.0, rel=1e-4)
+    params = window_params(window_region_code="CHEST")
+    out = _process(sat, params, masks=masks)
+    # Preserved IN THE DISPLAY DOMAIN: mapped to the display maximum (top of the
+    # normalized GSDF LUT), NOT the raw detector DN.
+    _, lut_display, _ = window.build_gsdf_lut(
+        params.get("window_pvalue_levels"),
+        params.get("gsdf_lum_min"),
+        params.get("gsdf_lum_max"),
+        params.get("gsdf_jnd_grid_size"),
+    )
+    op = np.asarray(out.pixel, np.float64)
+    assert op[3, 3] == pytest.approx(float(lut_display[-1]))
+    # No raw-DN outlier: max stays at the display top (f32 rounding tolerance).
+    assert op.max() <= float(lut_display.max()) + 1e-5
     assert np.array_equal(np.asarray(out.masks), masks)

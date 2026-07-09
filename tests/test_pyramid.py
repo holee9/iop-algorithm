@@ -31,7 +31,9 @@ def test_build_pyramid_band_count():
 
 def test_perfect_reconstruction_within_tolerance():
     img = _phantom((64, 64), seed=1)
-    for levels in (1, 3, 7):
+    # 64px supports at most 6 feasible levels (an axis would drop below 2px at 7);
+    # requesting L=7 here is now a named error (see test_infeasible_levels_rejected).
+    for levels in (1, 3, 6):
         pyr = pyramid.build_pyramid(img, levels=levels)
         recon = pyramid.reconstruct_pyramid(pyr)
         assert recon.shape == img.shape

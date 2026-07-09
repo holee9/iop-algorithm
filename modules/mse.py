@@ -13,10 +13,14 @@ Stateless, pure-functional display post-processing (SPEC-POST-001). Four stages:
         sigma_l is propagated from the input XFrame.noise (alpha, sigma) written
         by the upstream T5 denoise stage; a missing/degenerate model is refused
         (REQ-POST-MSE-4, SWR-000-5) — no default substitution.
-    (3) DRC on the coarse residual (lowest band) B' = B_mid + (B - B_mid)*gamma_DRC
-        (SWR-804, gamma_DRC < 1). B_mid is Params if provided else the robust mean
-        of B (common.robust_stats); the detail bands are left uncompressed so bone
-        and soft tissue are jointly visualized.
+    (3) DRC on the low-frequency component B = reconstruction of the top-K coarsest
+        levels (residual + the K coarsest detail bands, K = mse_drc_low_levels [T],
+        SWR-804 "B = sum of multiple top levels"): B' = B_mid + (B - B_mid)*gamma_DRC
+        (gamma_DRC < 1). B_mid is Params if provided else the robust mean of B
+        (common.robust_stats); the FINER detail bands are left uncompressed so bone
+        and soft tissue are jointly visualized. Compressing only the coarsest
+        residual (a single band) would leave a large-scale gradient spanning the
+        top detail levels uncompressed — hence the multi-level base.
     (4) reconstruct, then percentile [p0.1, p99.9] linear range normalization
         ("linear cutoff", SWR-805) excluding SATURATION / SATURATION_BAND pixels
         from the percentile estimate (common.robust masking via common.mask_ops).
@@ -24,10 +28,15 @@ Stateless, pure-functional display post-processing (SPEC-POST-001). Four stages:
 An optional soft-clip alternative modulation (REQ-POST-MSE-5, ⚠P patent flag) is
 selected by Params; when unselected the power-law base form is used.
 
-Mask contract (REQ-POST-CONTRACT-6): saturation pixel VALUES are preserved
-unchanged (no restoration, SWR-602 precedent, denoise precedent); no mask flag is
-set or cleared. Every tunable is externalized via Params (no hardcoding); [P]/[T]
-grades are annotated per SWR appendix A/A-2 (⚠P on the SWR-802 modulation form).
+Mask contract (REQ-POST-CONTRACT-6): SATURATION / SATURATION_BAND pixels are
+preserved in the OUTPUT DOMAIN — they are mapped to the normalized domain maximum
+(1.0) rather than passed through as raw detector DN. "Preservation" means no
+fabricated detail is injected at those pixels (SWR-602: no restoration), NOT a
+raw-DN passthrough: injecting thousands-scale DN into a [0,1]-normalized image
+would blow out downstream statistics. The SATURATION mask flags are kept unchanged
+(no flag is set or cleared). Every tunable is externalized via Params (no
+hardcoding); [P]/[T] grades are annotated per SWR appendix A/A-2 (⚠P on the
+SWR-802 modulation form).
 
 @MX:ANCHOR: [AUTO] `process` is the mse pipeline stage entry point invoked via the
 orchestrator registry (REQ-POST-CONTRACT-1/5).
@@ -58,22 +67,27 @@ P_POWER = "mse_power"  # per-level exponent p_l in (0,1] (list) [T] (SWR-802)
 P_NOISE_BETA = "mse_noise_beta"  # noise-gate strength beta [T] (SWR-803, appendix-A request)
 P_DRC_GAMMA = "mse_drc_gamma"  # DRC low-band compression gamma_DRC (<1) [ungraded] (SWR-804)
 P_DRC_BMID = "mse_drc_bmid"  # DRC mid reference B_mid; Params else robust mean (SWR-804)
+P_DRC_LOW_LEVELS = "mse_drc_low_levels"  # K coarsest detail bands folded into B [T] (SWR-804)
 P_NORM_PLOW = "mse_norm_plow"  # low percentile p0.1 [ungraded] (SWR-805)
 P_NORM_PHIGH = "mse_norm_phigh"  # high percentile p99.9 [ungraded] (SWR-805)
 # soft-clip alternative modulation params (⚠P, REQ-POST-MSE-5); only WHERE method == "soft_clip".
 P_SOFTCLIP_GAIN = "mse_softclip_gain"  # low-contrast linear gain [T]
 P_SOFTCLIP_KNEE = "mse_softclip_knee"  # saturation knee (coefficient magnitude) [T]
 
-# Mask bits excluded from the SWR-805 percentile estimate (EC-4) and whose pixel
-# VALUE is preserved unchanged (no restoration, SWR-602 / REQ-POST-CONTRACT-6).
+# Mask bits excluded from the SWR-805 percentile estimate (EC-4) and mapped to the
+# normalized domain maximum in the output (no raw-DN passthrough, no restoration;
+# SWR-602 / REQ-POST-CONTRACT-6).
 _SATURATION = np.uint8(MaskFlag.SATURATION | MaskFlag.SATURATION_BAND)
 
-# Per-level Gaussian noise-variance attenuation factor: independent per-pixel
-# noise variance is scaled by sum(kernel2d^2) at each REDUCE. kernel_1d =
-# [1 4 6 4 1]/16 -> sum(k^2) = 70/256; sum over the 2D separable kernel is that
-# squared. This propagates (alpha*signal + sigma^2) to each pyramid level (SWR-803).
-_K1D = np.array([1.0, 4.0, 6.0, 4.0, 1.0]) / 16.0
-_VAR_ATTEN_PER_LEVEL = float(np.sum(_K1D**2) ** 2)  # (70/256)^2
+# Normalized output domain maximum: SATURATION pixels are pinned here so they read
+# as "brightest, no fabricated detail" rather than corrupting the [0,1] range with
+# raw detector DN.
+_DOMAIN_MAX = 1.0
+
+# DRC default coarsest-level count folded into the low-frequency base B (SWR-804
+# "sum of multiple top levels"); externalized via P_DRC_LOW_LEVELS, this is only
+# the fallback when the caller omits the [T] parameter.
+_DRC_LOW_LEVELS_DEFAULT = 2
 
 
 class MseError(ValueError):
@@ -155,8 +169,15 @@ def _run(
     sigma: float,
     params: Params,
     method: str,
+    decisions: dict[str, float] | None = None,
 ) -> tuple[np.ndarray, dict[str, float]]:
-    """Full MSE + DRC + normalization for one buffer; returns (out, diagnostics)."""
+    """Full MSE + DRC + normalization for one buffer; returns (out, diagnostics).
+
+    Data-dependent scalar decisions (DRC B_mid, normalization [lo, hi]) are taken
+    from `decisions` when provided (the authoritative f32 path) so the f64 buffer
+    applies the SAME classification/threshold choices and differs only in
+    arithmetic — never in which decisions were made (equivalence gate TC-021).
+    """
     z = np.asarray(pixel, dtype=np.float64)
     levels = _require(params, P_LEVELS, int)
     beta = _require(params, P_NOISE_BETA, float)
@@ -164,6 +185,13 @@ def _run(
     plow = _require(params, P_NORM_PLOW, float)
     phigh = _require(params, P_NORM_PHIGH, float)
 
+    feasible = pyramid.max_feasible_levels(z.shape)
+    if levels > feasible:
+        raise MseError(
+            f"mse: requested {levels} pyramid levels but frame {tuple(z.shape)} "
+            f"supports at most {feasible}; honor the parameter or enlarge the frame "
+            f"(no silent truncation, SWR-000-5)"
+        )
     pyr = pyramid.build_pyramid(z, levels=levels)
     n_bands = len(pyr) - 1  # detail bands (excl. residual)
 
@@ -178,62 +206,89 @@ def _run(
             f"mse: unknown method '{method}' (expected 'power_law' or 'soft_clip')"
         )
 
+    # Per-level noise variance GAIN from white input to each Laplacian band,
+    # propagated exactly through the REDUCE/EXPAND chain (autocorrelation algebra,
+    # SWR-803). This replaces the naive independent-noise (sum(k^2)^k) model that
+    # underestimates correlated noise badly at coarse levels.
+    band_gains = pyramid.laplacian_band_noise_gains(z.shape, n_bands)
+
     # Gaussian levels track the local signal for the noise-variance propagation.
     # G_0 = z; G_{k+1} = reduce(G_k). The bandpass detail band k shares G_k's shape.
     modulated: list[np.ndarray] = []
     g_level = z
     for k in range(n_bands):
         c = pyr[k]
-        # Local noise variance at level k: (alpha*|G_k| + sigma^2) attenuated by
-        # the low-pass energy at each prior REDUCE (independent-noise propagation).
+        # Local input noise variance (alpha*|G_k| + sigma^2) scaled by the exact
+        # white-input -> band-k variance gain (correlated-noise propagation).
         base_var = alpha * np.abs(g_level) + sigma * sigma
-        sigma_l_sq = base_var * (_VAR_ATTEN_PER_LEVEL**k)
+        sigma_l_sq = base_var * band_gains[k]
         if method == "power_law":
             c_mod = _modulate_power_law(c, gammas[k], powers[k])
         else:
             c_mod = _modulate_soft_clip(c, gain, knee) * gammas[k]
         g = _noise_gate(c, sigma_l_sq, beta)
         modulated.append((1.0 - g) * c + g * c_mod)
-        g_level = pyramid._reduce(g_level)
+        g_level = pyramid.reduce_once(g_level)
 
-    # DRC on the coarse residual (lowest band) — bone/soft-tissue joint dynamic
-    # range compression (SWR-804). B_mid: Params else robust mean (single rule).
+    # DRC on the low-frequency base B = reconstruction of the top-K coarsest levels
+    # (residual + the K coarsest detail bands), NOT just the residual — a
+    # large-scale gradient spanning the top detail levels must be compressed too
+    # (SWR-804 "sum of multiple top levels"). B_mid: Params else robust mean.
     residual = np.asarray(pyr[-1], dtype=np.float64)
+    k_low = int(params.get(P_DRC_LOW_LEVELS, _DRC_LOW_LEVELS_DEFAULT))
+    k_low = max(1, min(k_low, n_bands))  # honor >=1 coarse band; clamp to available
+    # Reconstruct the low-frequency base by folding the K coarsest detail bands
+    # (indices [n_bands-k_low, n_bands-1]) back onto the residual, stopping at the
+    # resolution of the finest included level.
+    base = residual
+    for k in range(n_bands - 1, n_bands - 1 - k_low, -1):
+        base = modulated[k] + pyramid._expand(base, modulated[k].shape)
     b_mid_param = params.get(P_DRC_BMID)
-    b_mid = (
-        float(b_mid_param)
-        if b_mid_param is not None
-        else robust_stats.robust_mean(residual)
-    )
-    compressed_residual = b_mid + (residual - b_mid) * drc_gamma
-    lowband_range = float(np.ptp(residual))
+    if decisions is not None:
+        b_mid = float(decisions["b_mid"])
+    elif b_mid_param is not None:
+        b_mid = float(b_mid_param)
+    else:
+        b_mid = robust_stats.robust_mean(base)
+    compressed_base = b_mid + (base - b_mid) * drc_gamma
+    lowband_range = float(np.ptp(base))
     compression_rate = (
-        1.0 - float(np.ptp(compressed_residual)) / lowband_range
+        1.0 - float(np.ptp(compressed_base)) / lowband_range
         if lowband_range > 0.0
         else 0.0
     )
-
-    recon = pyramid.reconstruct_pyramid(modulated + [compressed_residual])
+    # Reconstruct the remaining (finer, uncompressed) detail bands on the
+    # compressed base.
+    recon = compressed_base
+    for k in range(n_bands - 1 - k_low, -1, -1):
+        recon = modulated[k] + pyramid._expand(recon, modulated[k].shape)
 
     # SWR-805 percentile range normalization ("linear cutoff") excluding
     # saturation pixels from the percentile estimate (EC-4).
-    valid = (masks_u8 & _SATURATION) == 0
-    sample = recon[valid] if valid.any() else recon
-    lo = float(np.percentile(sample, plow))
-    hi = float(np.percentile(sample, phigh))
-    if hi <= lo:
-        hi = lo + 1.0  # degenerate flat region — avoid division by zero
+    if decisions is not None:
+        lo, hi = float(decisions["norm_low"]), float(decisions["norm_high"])
+    else:
+        valid = (masks_u8 & _SATURATION) == 0
+        sample = recon[valid] if valid.any() else recon
+        lo = float(np.percentile(sample, plow))
+        hi = float(np.percentile(sample, phigh))
+        if hi <= lo:
+            hi = lo + 1.0  # degenerate flat region — avoid division by zero
     out = np.clip((recon - lo) / (hi - lo), 0.0, 1.0)
 
-    # Preserve saturation pixel VALUES unchanged (no restoration, SWR-602 /
-    # REQ-POST-CONTRACT-6; denoise precedent).
+    # Preserve saturation pixels IN THE OUTPUT DOMAIN: pin to the normalized domain
+    # maximum (no fabricated detail; no raw-DN passthrough). Injecting raw DN
+    # (thousands) into a [0,1] image would corrupt downstream statistics
+    # (SWR-602 no-restoration / REQ-POST-CONTRACT-6).
     preserve = (masks_u8 & _SATURATION) != 0
-    out[preserve] = z[preserve]
+    out[preserve] = _DOMAIN_MAX
 
     diagnostics = {
         "gamma_mean": float(np.mean(gammas)),
         "drc_gamma": float(drc_gamma),
+        "drc_low_levels": float(k_low),
         "drc_compression_rate": float(compression_rate),
+        "b_mid": float(b_mid),
         "norm_low": lo,
         "norm_high": hi,
     }
@@ -256,7 +311,16 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
 
     out_f64: np.ndarray | None = None
     if frame.pixel_f64 is not None:
-        out_f64, _ = _run(frame.pixel_f64, masks_u8, alpha, sigma, params, method)
+        # Reuse the authoritative f32 threshold decisions so the f64 buffer differs
+        # only arithmetically, not in classification (defect: divergent decisions).
+        decisions = {
+            "b_mid": diag["b_mid"],
+            "norm_low": diag["norm_low"],
+            "norm_high": diag["norm_high"],
+        }
+        out_f64, _ = _run(
+            frame.pixel_f64, masks_u8, alpha, sigma, params, method, decisions
+        )
 
     new = frame.with_pixel(out_pixel.astype(frame.pixel.dtype), out_f64)
     entry = HistoryEntry(

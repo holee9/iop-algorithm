@@ -52,6 +52,44 @@ def other_calib(
     )
 
 
+def full_calib_map(
+    shape: tuple[int, int],
+    *,
+    panel_id: str = "PANEL-A",
+) -> dict:
+    """Complete CalibSet map for a ``PipelineDefinition.full()`` run.
+
+    Supplies a resolution-/panel_id-matching CalibSet for every canonical stage:
+    a kind-matched CalibSet for the detector-calibrated stages, CalibSet(NOISE) for
+    denoise, and CalibSet(OTHER) placeholders for saturation/geometry and the T6
+    display post stages mse/window/post (which have no detector calibration but
+    still pass the entry gate, decision 2). All share `panel_id` (gate requires it).
+    """
+    from pipeline.orchestrator import CANONICAL_ORDER
+
+    kind_by_stage = {
+        "offset": CalibKind.OFFSET,
+        "gain": CalibKind.GAIN,
+        "defect": CalibKind.DEFECT,
+        "lag": CalibKind.LAG,
+        "line_noise": CalibKind.LINE_NOISE,
+        "denoise": CalibKind.NOISE,
+    }
+    out: dict = {}
+    for stage in CANONICAL_ORDER:
+        kind = kind_by_stage.get(stage, CalibKind.OTHER)
+        out[stage] = CalibSet(
+            panel_id=panel_id,
+            resolution=tuple(shape),
+            valid_from="2026-01-01",
+            valid_until="2027-01-01",
+            kind=kind,
+            data={},
+            provenance=CalibProvenance(created_at="2026-07-09", source="synthetic"),
+        )
+    return out
+
+
 def mse_params(**overrides) -> Params:
     """MSE/DRC Params: pyramid levels, per-level gain/exponent, gate, DRC, norm."""
     values = {
@@ -64,6 +102,8 @@ def mse_params(**overrides) -> Params:
         "mse_power": [1.0, 0.85, 0.75, 0.7],  # [T] per-level exponent p in (0,1]
         "mse_noise_beta": 1.0,  # [T] noise-gate strength
         "mse_drc_gamma": 0.5,  # DRC low-band compression (<1)
+        "mse_drc_low_levels": 2,  # [T] K coarsest detail bands folded into base B
+
         "mse_norm_plow": 0.1,  # [ungraded] SWR-805 low percentile
         "mse_norm_phigh": 99.9,  # [ungraded] SWR-805 high percentile
         # soft-clip alternative (⚠P) — only consumed WHERE method == "soft_clip".

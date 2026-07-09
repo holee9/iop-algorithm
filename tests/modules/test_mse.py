@@ -120,15 +120,18 @@ def test_saturation_excluded_from_normalization():
     assert hi < 10000.0
 
 
-def test_saturation_values_preserved_unchanged():
+def test_saturation_mapped_to_domain_max_not_raw_dn():
     _, noisy = make_bone_soft_phantom()
     masks = np.zeros(noisy.shape, dtype=np.uint8)
     masks[10, 10] = int(MaskFlag.SATURATION)
     sat_noisy = noisy.copy()
     sat_noisy[10, 10] = 55000.0
     out = _process(sat_noisy, masks=masks)
-    # Value preserved (no restoration, no normalization applied at that pixel).
-    assert float(np.asarray(out.pixel)[10, 10]) == pytest.approx(55000.0, rel=1e-4)
+    # Preserved IN THE OUTPUT DOMAIN: mapped to the normalized domain max (1.0),
+    # NOT the raw detector DN (which would blow out the [0,1] output).
+    op = np.asarray(out.pixel, np.float64)
+    assert op[10, 10] == pytest.approx(1.0)
+    assert op.max() <= 1.0  # no raw-DN outlier corrupting the range
 
 
 def test_masks_substrate_unchanged():

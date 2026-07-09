@@ -95,13 +95,23 @@ class PipelineDefinition:
         """Definition running every canonical stage in order (including denoise).
 
         A ``full()`` run therefore requires a COMPLETE configuration for every
-        stage: the entry gate demands a matching CalibSet per stage (e.g.
-        CalibSet(NOISE) for denoise) and each module demands its externalized
-        Params bundle. A missing calibration surfaces as a CalibrationError at the
-        entry gate BEFORE any frame is processed; a missing denoise parameter
-        surfaces as an explicit named DenoiseError at the start of the denoise
-        stage (also before that stage touches pixel data). Both are loud, early,
-        named failures — never a silent default substitution (SWR-000-5).
+        stage: the entry gate demands a matching CalibSet per stage and each module
+        demands its externalized Params bundle. Concretely a caller must supply:
+          - CalibSet(NOISE) for the denoise stage (T5, kind-vs-stage enforced);
+          - a matching-kind CalibSet for each detector-calibrated stage
+            (offset/gain/defect/lag/line_noise);
+          - a resolution-/panel_id-matching CalibSet(OTHER) placeholder for the
+            un-wired stages saturation/geometry AND the display post stages
+            mse/window/post (T6) — these have no detector calibration but still pass
+            through the entry gate, so an OTHER CalibSet with the frame's resolution
+            and the shared panel_id is required (decision 2);
+          - the per-stage Params bundle (e.g. the mse and window Params).
+        A missing calibration surfaces as a CalibrationError at the entry gate
+        BEFORE any frame is processed; a missing module parameter surfaces as an
+        explicit named error (DenoiseError / MseError / WindowError) at the start of
+        that stage (also before it touches pixel data). Both are loud, early, named
+        failures — never a silent default substitution (SWR-000-5). Tests build a
+        complete map via ``tests.modules.phantoms.post_syn.full_calib_map``.
         """
         return cls(stages=CANONICAL_ORDER)
 

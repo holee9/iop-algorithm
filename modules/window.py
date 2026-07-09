@@ -131,11 +131,15 @@ def build_gsdf_lut(
         jnd_index : (pvalue_levels,) target JND index per P-value.
         display   : (pvalue_levels,) normalized display value in [0, 1]
                     ((L(j_p) - L_min) / (L_max - L_min)).
-        max_dev   : the per-JND contrast-response deviation self-check
-                    (REQ-POST-GSDF-2): max over P-values of the normalized
-                    difference between the JND index recovered from the realized
-                    LUT luminance and the ideal equally-spaced JND index. Bounded
-                    externally by the injected GSDF threshold in tests (XDET-TC-014).
+        max_dev   : the LUT INVERSION-RESIDUAL metric (REQ-POST-GSDF-2): max over
+                    P-values of the normalized difference between the JND index
+                    recovered from the realized LUT luminance and the ideal
+                    equally-spaced JND index. This measures the numeric round-trip
+                    (forward-poly -> interp inverse -> forward-poly) error of the
+                    LUT construction; it is NOT a test of PS3.14 correctness on its
+                    own (that circularity is why independent PS3.14 reference values
+                    are asserted in XDET-TC-014, not this self-check). Bounded
+                    externally by the injected GSDF threshold in tests.
     """
     if pvalue_levels < 2:
         raise WindowError("window: window_pvalue_levels must be >= 2")
@@ -162,19 +166,27 @@ def build_gsdf_lut(
 
 
 def _resolve_voi(
-    image: np.ndarray, anatomy: np.ndarray, params: Params
-) -> tuple[float, float, bool]:
-    """Resolve the window [low, high] signal bounds; returns (low, high, overridden).
+    image: np.ndarray, anatomy: np.ndarray, fov: np.ndarray, params: Params
+) -> tuple[float, float, bool, str]:
+    """Resolve the window [low, high] bounds; returns (low, high, overridden, source).
 
     Manual override (REQ-POST-WINDOW-3) takes precedence; otherwise the region
-    preset percentiles (REQ-POST-WINDOW-1/2) are applied to the anatomy histogram.
+    preset percentiles (REQ-POST-WINDOW-1/2) are applied to the effective-anatomy
+    histogram.
+
+    When the anatomy region is empty after direct-exposure separation, the
+    percentiles are NOT silently taken over the whole image (that would pool the
+    collimated border back in and corrupt the window). Instead the estimate falls
+    back to the FOV (the collimation-included exposed field) when it is non-empty —
+    a degraded-but-loud path recorded via the returned ``source`` ("fov"). If even
+    the FOV is empty there is no valid signal and the request is refused.
     """
     override = params.get(P_OVERRIDE)
     if override is not None:
         low, high = float(override[0]), float(override[1])
         if high <= low:
             raise WindowError(f"window: override high {high} <= low {low}")
-        return low, high, True
+        return low, high, True, "override"
 
     presets = params.get(P_PRESETS)
     region = params.get(P_REGION)
@@ -189,12 +201,24 @@ def _resolve_voi(
             "window_voi_presets entry, or window_voi_default (SWR-902)"
         )
     p_low, p_high = float(voi_pct[0]), float(voi_pct[1])
-    sample = image[anatomy] if anatomy.any() else image.ravel()
+    if anatomy.any():
+        sample = image[anatomy]
+        source = "anatomy"
+    elif np.asarray(fov, dtype=bool).any():
+        # Degraded-but-loud: no attenuated anatomy remained (e.g. all-direct
+        # exposure); fall back to the exposed field, never the whole image.
+        sample = image[np.asarray(fov, dtype=bool)]
+        source = "fov"
+    else:
+        raise WindowError(
+            "window: empty exposed field after collimation/direct-exposure "
+            "separation — no valid signal to window (refusing whole-image fallback)"
+        )
     low = float(np.percentile(sample, p_low))
     high = float(np.percentile(sample, p_high))
     if high <= low:
         high = low + 1.0
-    return low, high, False
+    return low, high, False, source
 
 
 def remap_to_pvalue(
@@ -215,32 +239,49 @@ def _run(
     masks_u8: np.ndarray,
     params: Params,
     lut_display: np.ndarray,
+    voi: tuple[float, float, bool, str] | None = None,
 ) -> tuple[np.ndarray, dict[str, float]]:
-    """Full windowing + GSDF mapping for one buffer; returns (out, diagnostics)."""
+    """Full windowing + GSDF mapping for one buffer; returns (out, diagnostics).
+
+    The VOI decision (collimation/direct-exposure classification + [low, high]
+    bounds) is taken from `voi` when provided (the authoritative f32 path) so the
+    f64 buffer applies the SAME window, differing only arithmetically — never in
+    which pixels were classified as field/anatomy (equivalence gate TC-021).
+    """
     z = np.asarray(pixel, dtype=np.float64)
     rel = _require(params, P_COLLIM_REL, float)
     fence_k = _require(params, P_DIRECT_FENCE, float)
     pmax = _require(params, P_PVALUE_MAX, int)
 
-    field = histogram_fov.detect_collimation_field(z, rel_threshold=rel)
-    anatomy = histogram_fov.separate_direct_exposure(z, field, fence_k=fence_k)
-    # Exclude saturation/defect pixels from the anatomy histogram (stats only).
-    anatomy = anatomy & ((masks_u8 & (_SATURATION | _DEFECT)) == 0)
-
-    low, high, overridden = _resolve_voi(z, anatomy, params)
+    valid = (masks_u8 & (_SATURATION | _DEFECT)) == 0
+    if voi is not None:
+        low, high, overridden, voi_source = voi
+        anatomy = np.zeros(z.shape, dtype=bool)  # only for the reported fraction
+    else:
+        field = histogram_fov.detect_collimation_field(z, rel_threshold=rel)
+        fov = field & valid  # exposed field for the degraded VOI fallback
+        anatomy = histogram_fov.separate_direct_exposure(z, field, fence_k=fence_k)
+        # Exclude saturation/defect pixels from the anatomy histogram (stats only).
+        anatomy = anatomy & valid
+        low, high, overridden, voi_source = _resolve_voi(z, anatomy, fov, params)
     pvalue = remap_to_pvalue(z, low, high, pmax)
     # GSDF LUT lookup by interpolation over the P-value index grid.
     idx = np.arange(len(lut_display), dtype=np.float64)
     out = np.interp(pvalue, idx, lut_display)
 
-    # Preserve saturation pixel VALUES unchanged (no restoration, REQ-POST-CONTRACT-6).
+    # Preserve saturation pixels IN THE OUTPUT (display) DOMAIN: pin to the display
+    # maximum (highest luminance, no fabricated detail). Passing raw detector DN
+    # through would blow out the display-normalized output (SWR-602 no-restoration /
+    # REQ-POST-CONTRACT-6).
     preserve = (masks_u8 & _SATURATION) != 0
-    out[preserve] = z[preserve]
+    out[preserve] = float(lut_display[-1])
 
     diagnostics = {
         "voi_low": float(low),
         "voi_high": float(high),
         "override": 1.0 if overridden else 0.0,
+        # 0=anatomy, 1=fov fallback, 2=override (loud record of degraded path).
+        "voi_source": {"anatomy": 0.0, "fov": 1.0, "override": 2.0}[voi_source],
         "anatomy_fraction": float(np.count_nonzero(anatomy)) / float(anatomy.size),
     }
     return out, diagnostics
@@ -265,7 +306,16 @@ def process(frame: XFrame, calib: CalibSet, params: Params) -> XFrame:
 
     out_f64: np.ndarray | None = None
     if frame.pixel_f64 is not None:
-        out_f64, _ = _run(frame.pixel_f64, masks_u8, params, lut_display)
+        # Reuse the authoritative f32 VOI decision so the f64 buffer applies the
+        # same window (arithmetic-only divergence; defect: divergent classification).
+        _source_name = {0.0: "anatomy", 1.0: "fov", 2.0: "override"}
+        voi = (
+            float(diag["voi_low"]),
+            float(diag["voi_high"]),
+            diag["override"] == 1.0,
+            _source_name[diag["voi_source"]],
+        )
+        out_f64, _ = _run(frame.pixel_f64, masks_u8, params, lut_display, voi)
 
     new = frame.with_pixel(out_pixel.astype(frame.pixel.dtype), out_f64)
     entry = HistoryEntry(
