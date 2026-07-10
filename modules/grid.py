@@ -75,6 +75,22 @@ P_BG_WINDOW_BINS = "grid_bg_window_bins"  # local-background rolling-median widt
 P_META_MOUNTED = "grid_meta_mounted"  # bool: grid mounted per acquisition metadata
 P_META_NOMINAL = "grid_meta_nominal_lpmm"  # nominal density (comparison only)
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# Detection params (pitch/search/significance/direction/harmonic) are always
+# read; the notch params (fwhm/moire/atten cap) are required when a grid is
+# detected and suppressed. Metadata keys (P_META_*) and P_BG_WINDOW_BINS have
+# defaults and are optional. Key NAMES only — f_N/f_s are DERIVED from P_PITCH.
+REQUIRED_PARAMS: tuple[str, ...] = (
+    P_PITCH,
+    P_SEARCH_LO,
+    P_DTH_DB,
+    P_DIR_MARGIN_DB,
+    P_HARMONIC_MAX,
+    P_NOTCH_FWHM_MULT,
+    P_MOIRE_CUTOFF,
+    P_MOIRE_ATTEN_CAP,
+)
+
 _META_TOL_LPMM = 0.25  # observed-vs-metadata agreement tolerance (warning only)
 _2SQRT2LN2 = 2.0 * np.sqrt(2.0 * np.log(2.0))  # FWHM -> Gaussian sigma factor
 

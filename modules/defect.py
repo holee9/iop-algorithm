@@ -48,6 +48,11 @@ P_CMAX = "defect_cmax_pixels"  # max connected cluster size (5x5 -> 25) [T]
 P_LINE_MIN = "defect_line_min"  # min row/col run length for a LINE (>=8) [T]
 P_LINE_MAX_WIDTH = "defect_line_max_width"  # max perpendicular extent of a LINE [T]
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# Only P_CMAX is mandatory (raises if absent); P_LINE_MIN/P_LINE_MAX_WIDTH have
+# module defaults and are therefore optional, not part of the required manifest.
+REQUIRED_PARAMS: tuple[str, ...] = (P_CMAX,)
+
 _VALID_LABELS = frozenset(int(m) for m in DefectMorphology)
 
 # 4 interpolation axes for the edge-directed cluster branch (0/45/90/135 deg).

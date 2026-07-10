@@ -32,6 +32,9 @@ K_DELTA_O = "delta_O"  # Optional dynamic offset increment DeltaO(T) [B]
 # Params keys.
 P_RAW_SAT = "raw_saturation_threshold"  # raw saturation point S_th [B] (SWR-601)
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+REQUIRED_PARAMS: tuple[str, ...] = (P_RAW_SAT,)
+
 # Physical floor for unsigned raw after subtraction ([S], not tunable).
 _RAW_FLOOR = 0.0
 

@@ -59,6 +59,11 @@ P_ACTIVATE_PX = "geometry_activation_residual_px"  # EV-106 min (external inject
 P_SPLINE_ORDER = "geometry_spline_order"  # resampling spline order [P]
 P_INVERSE_ITERS = "geometry_inverse_iters"  # fixed-point inverse iterations [P]
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# P_ACTIVATE_PX (activation boundary) and P_DEGREE (when active) are mandatory;
+# P_SPLINE_ORDER/P_INVERSE_ITERS have module defaults and are optional.
+REQUIRED_PARAMS: tuple[str, ...] = (P_ACTIVATE_PX, P_DEGREE)
+
 _SPLINE_ORDER_DEFAULT = 3
 _INVERSE_ITERS_DEFAULT = 8
 

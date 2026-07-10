@@ -74,6 +74,36 @@ P_NORM_PHIGH = "mse_norm_phigh"  # high percentile p99.9 [ungraded] (SWR-805)
 P_SOFTCLIP_GAIN = "mse_softclip_gain"  # low-contrast linear gain [T]
 P_SOFTCLIP_KNEE = "mse_softclip_knee"  # saturation knee (coefficient magnitude) [T]
 
+# Params keys always required by a MSE/DRC run (raise-on-missing), independent of
+# the modulation method. Key NAMES only (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+_REQUIRED_COMMON: tuple[str, ...] = (
+    P_LEVELS,
+    P_GAMMA,
+    P_NOISE_BETA,
+    P_DRC_GAMMA,
+    P_NORM_PLOW,
+    P_NORM_PHIGH,
+)
+
+
+def _required_keys(method: str) -> tuple[str, ...]:
+    """Method-specific required Params key set (power_law | soft_clip)."""
+    if method == "soft_clip":
+        return _REQUIRED_COMMON + (P_SOFTCLIP_GAIN, P_SOFTCLIP_KNEE)
+    # power_law (default) additionally needs the per-level exponent sequence.
+    return _REQUIRED_COMMON + (P_POWER,)
+
+
+def required_params(params: Params) -> tuple[str, ...]:
+    """Selector-dependent required-Params manifest (SPEC-ERGO-001 REQUIRED_PARAMS).
+
+    # @MX:NOTE: [AUTO] mse's required key set depends on the method selector
+    # (power_law | soft_clip), so it is exposed as a function. Derived from the
+    # module's own P_* constants — key NAMES only, never numeric values.
+    """
+    method = str(params.get(P_METHOD, "power_law"))
+    return _required_keys(method)
+
 # Mask bits excluded from the SWR-805 percentile estimate (EC-4) and mapped to the
 # normalized domain maximum in the output (no raw-DN passthrough, no restoration;
 # SWR-602 / REQ-POST-CONTRACT-6).

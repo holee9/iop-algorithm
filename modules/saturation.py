@@ -47,6 +47,11 @@ MODULE_VERSION = "1.0.0"
 # Params keys.
 P_BAND_WIDTH = "saturation_band_width"  # boundary band W_band (SWR-602 val 2)
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# P_BAND_WIDTH has a module default and is optional, so the required manifest is
+# empty (this stage consumes only the accumulated SATURATION mask).
+REQUIRED_PARAMS: tuple[str, ...] = ()
+
 # SWR-602 boundary-band width default when not injected (documented, not a magic
 # literal -- callers override via Params `saturation_band_width`). Appendix A
 # registration pending (spec decision 6).
