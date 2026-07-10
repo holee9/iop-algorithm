@@ -40,6 +40,7 @@ from qtpy.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -49,7 +50,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from apps.gui.export import export_frame
+from apps.gui.export import export_frame, import_frame
 from apps.gui.history_panel import HistoryPanel
 from apps.gui.io_panel import DataWriteRejectedError, IoPanel
 from apps.gui.layers import (
@@ -206,6 +207,10 @@ class ModuleVerifierTab(QWidget):
         self.module_combo = QComboBox(self)
         self.module_combo.addItems(sorted(default_registry()))
         self.params_form = ParamsForm(keys=(), parent=self)
+        self.param_key_edit = QLineEdit(self)
+        self.param_key_edit.setPlaceholderText("param name (see modules/<stage>.py P_* constants)")
+        self.add_param_button = QPushButton("Add param field", self)
+        self.add_param_button.clicked.connect(self._on_add_param_clicked)
         self.run_button = QPushButton("Run module", self)
         self.run_button.clicked.connect(self._on_run_clicked)
         self.cancel_button = QPushButton("Cancel", self)
@@ -213,6 +218,9 @@ class ModuleVerifierTab(QWidget):
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.export_button = QPushButton("Export output...", self)
         self.export_button.clicked.connect(self._on_export_clicked)
+        self.load_expected_button = QPushButton("Load expected (optional)...", self)
+        self.load_expected_button.clicked.connect(self._on_load_expected_clicked)
+        self.expected_frame: XFrame | None = None
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 0)  # indeterminate (no per-stage % from the engine)
         self.progress.setVisible(False)
@@ -232,15 +240,50 @@ class ModuleVerifierTab(QWidget):
         controls.addWidget(self.run_button)
         controls.addWidget(self.cancel_button)
         controls.addWidget(self.export_button)
+        controls.addWidget(self.load_expected_button)
+        param_row = QHBoxLayout()
+        param_row.addWidget(self.param_key_edit)
+        param_row.addWidget(self.add_param_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.io_panel)
         layout.addLayout(controls)
+        layout.addLayout(param_row)
         layout.addWidget(self.params_form)
         layout.addWidget(self.progress)
         layout.addWidget(self.compare_display)
         layout.addWidget(self.status_label)
         layout.addWidget(self.history_panel)
+
+    def _on_add_param_clicked(self) -> None:
+        """Add a named Params field on demand (REQ-VIEW-RUN-1 Params input).
+
+        No per-module key table is hardcoded here -- the SWR `P_*` constant
+        names are documented in each `modules/<stage>.py` file; the user
+        supplies the exact key name for the stage they selected.
+        """
+        self.params_form.add_field(self.param_key_edit.text().strip())
+        self.param_key_edit.clear()
+
+    def _on_load_expected_clicked(self) -> None:  # pragma: no cover - exercised via dialog only
+        path, _ = QFileDialog.getOpenFileName(self, "Load expected golden frame", "", "")
+        if path:
+            self.load_expected(path)
+
+    def load_expected(self, path: str | Path) -> XFrame | None:
+        """Load a previously-exported XFrame as the fixture-verification
+        `expected` golden (REQ-VIEW-RUN-1 fixture-verification mode) -- reuses
+        `apps.gui.export.import_frame`'s npz+JSON format rather than
+        inventing a second fixture format. Testable directly, mirroring
+        `IoPanel.open_raw`/`export_to`."""
+        try:
+            frame = import_frame(path)
+        except (OSError, KeyError, ValueError) as exc:
+            self.status_label.setText(f"Failed to load expected frame: {exc}")
+            return None
+        self.expected_frame = frame
+        self.status_label.setText(f"Expected frame loaded: {frame.shape}")
+        return frame
 
     def _on_run_clicked(self) -> None:
         """Start `run_module` on a background thread (REQ-VIEW-ARCH-8)."""
@@ -252,6 +295,7 @@ class ModuleVerifierTab(QWidget):
         module = default_registry()[stage]
         calib = make_synthetic_calibset(frame.shape, calib_kind_for_stage(stage))
         params = self.params_form.build_params()
+        expected = self.expected_frame
 
         self._cancelled = False
         self.run_button.setEnabled(False)
@@ -260,7 +304,7 @@ class ModuleVerifierTab(QWidget):
         self.status_label.setText(f"Running '{stage}'...")
 
         self._worker = CallableWorker(
-            lambda: run_module(module, frame, calib, params), self
+            lambda: run_module(module, frame, calib, params, expected), self
         )
         self._worker.succeeded.connect(self._on_succeeded)
         self._worker.failed.connect(lambda msg: self._on_failed(stage, msg))

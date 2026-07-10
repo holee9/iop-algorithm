@@ -11,6 +11,8 @@ Gen 1 test as alive.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 pytest.importorskip("qtpy")  # C-12: must not block a [gui]-less core-no-gui collection
@@ -288,6 +290,34 @@ def test_guard_output_path_allows_writes_outside_data_root(tmp_path):
     resolved = guard_output_path(tmp_path / "exports" / "out.npz", project_root=tmp_path)
 
     assert resolved == (tmp_path / "exports" / "out.npz").resolve()
+
+
+# -- REQ-VIEW-CORE-1: raw/JSON loading through the actual IoPanel widget -----
+
+
+def test_open_raw_loads_a_real_raw_json_file_losslessly(qtbot, tmp_path):
+    """A genuine 16-bit .raw + .json sidecar pair, read through the real
+    `IoPanel.open_raw` code path (not `.frame =` assignment bypass) -- the
+    e2e smoke tests exercise `.frame =` directly, so this was the one
+    remaining unverified code path in the load pipeline."""
+    shape = (12, 20)
+    pixel_u16 = np.linspace(0, 60000, shape[0] * shape[1], dtype=np.uint16).reshape(shape)
+    raw_path = tmp_path / "sample.raw"
+    pixel_u16.tofile(raw_path)
+    meta_path = tmp_path / "sample.json"
+    meta_path.write_text(
+        json.dumps({"resolution": list(shape), "dtype": "uint16"}), encoding="utf-8"
+    )
+
+    panel = IoPanel()
+    qtbot.addWidget(panel)
+    frame = panel.open_raw(raw_path, meta_path)
+
+    assert frame is not None
+    assert frame.shape == shape
+    assert np.array_equal(np.asarray(frame.pixel), pixel_u16.astype(np.float32))
+    assert panel.frame is frame
+    assert f"{shape}" in panel._label.text()
 
 
 # -- REQ-VIEW-CORE-1: malformed raw/JSON input reports an error, never crashes --

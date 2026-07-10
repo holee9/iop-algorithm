@@ -175,6 +175,167 @@ def test_end_to_end_metrics_tab_full_wiring(qtbot):
     )
 
 
+def test_dynamic_param_field_is_read_by_a_real_run(qtbot):
+    """`ParamsForm.add_field` + a typed value actually reach `run_module`.
+
+    Found missing entirely: `ModuleVerifierTab` constructed `ParamsForm(keys=())`
+    (no test ever exercised `ParamsForm`, so nothing caught that the running
+    app could never accept a Params value for any module). Proof here is
+    behavioral: `modules.gain.process` checks its two required Params
+    ('gain_min'/'gain_max') BEFORE it reads any calibration payload, so
+    without them the run fails on the MISSING-PARAMETER check; after adding
+    both fields and typing values, it fails LATER (missing G_map calibration
+    payload, which the synthetic empty CalibSet never supplies) -- proving
+    the typed values were actually read and passed through, not just
+    displayed on screen.
+    """
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.module_tab
+    tab.io_panel.frame = _synthetic_frame()
+    tab.module_combo.setCurrentIndex(tab.module_combo.findText("gain"))
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert "missing required parameter" in tab.status_label.text()
+
+    for key, value in (("gain_min", "0.5"), ("gain_max", "2.0")):
+        qtbot.keyClicks(tab.param_key_edit, key)
+        qtbot.mouseClick(tab.add_param_button, Qt.MouseButton.LeftButton)
+        assert key in tab.params_form._edits
+        qtbot.keyClicks(tab.params_form._edits[key], value)
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert "missing required parameter" not in tab.status_label.text()
+    assert "G_map" in tab.status_label.text()
+
+
+def test_expected_fixture_load_drives_pass_and_fail_verification_badge(qtbot, tmp_path):
+    """`ModuleVerifierTab.load_expected` (REQ-VIEW-RUN-1 fixture-verification
+    mode) was entirely unreachable in the running app -- `_on_run_clicked`
+    never passed `expected` to `run_module`. Verifies both outcomes: an
+    exported real output re-loaded as `expected` PASSes; a deliberately
+    different frame FAILs."""
+    from apps.gui.export import export_frame
+    from common.xframe import new_frame as _new_frame
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.module_tab
+    frame = _synthetic_frame()
+    tab.io_panel.frame = frame
+    tab.module_combo.setCurrentIndex(tab.module_combo.findText("saturation"))
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert tab.last_result is not None
+
+    pass_path = tmp_path / "expected_pass"
+    export_frame(tab.last_result.output_frame, pass_path, tmp_path)
+    loaded = tab.load_expected(str(pass_path))
+    assert loaded is not None
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert tab.last_result.verification is not None
+    assert tab.last_result.verification.passed is True
+    assert "[PASS]" in tab.status_label.text()
+
+    mismatched = _new_frame(np.asarray(frame.pixel) + 500.0)
+    fail_path = tmp_path / "expected_fail"
+    export_frame(mismatched, fail_path, tmp_path)
+    tab.load_expected(str(fail_path))
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert tab.last_result.verification is not None
+    assert tab.last_result.verification.passed is False
+    assert "[FAIL]" in tab.status_label.text()
+
+
+def test_pipeline_viewer_cancel_discards_result(qtbot):
+    """Cancel on the Pipeline Viewer tab (previously only Module Verifier's
+    cancel path had e2e coverage)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.pipeline_tab
+    tab.io_panel.frame = _synthetic_frame()
+    tab.stage_checks["saturation"].setChecked(True)
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    assert tab.cancel_button.isEnabled()
+    qtbot.mouseClick(tab.cancel_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+
+    assert tab.last_result is None
+    assert tab.status_label.text() == "Cancelled"
+
+
+def test_pipeline_viewer_reports_calibration_data_failure_without_crashing(qtbot):
+    """Selecting a stage needing real calibration data (offset) fails the
+    whole partial pipeline cleanly (REQ-VIEW-CORE-3: no default substitution)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.pipeline_tab
+    tab.io_panel.frame = _synthetic_frame()
+    tab.stage_checks["offset"].setChecked(True)
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+
+    assert tab.last_result is None
+    assert "pipeline failed" in tab.status_label.text()
+    assert "O_map" in tab.status_label.text()
+
+
+def test_metrics_tab_reports_when_no_source_loaded(qtbot):
+    """Compute/ROI buttons report status text (never raise) with no source frame."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.metrics_tab
+    qtbot.mouseClick(tab.compute_button, Qt.MouseButton.LeftButton)
+    assert "Load a source frame first" in tab.status_label.text()
+    qtbot.mouseClick(tab.roi_button, Qt.MouseButton.LeftButton)
+    assert "Load a source frame first" in tab.status_label.text()
+
+
+def test_metrics_tab_loads_source_from_pipeline_viewer_output(qtbot):
+    """`get_pipeline_frame` wiring (previously only the Module Verifier source
+    button had e2e coverage)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    ptab = window.pipeline_tab
+    ptab.io_panel.frame = _synthetic_frame()
+    ptab.stage_checks["saturation"].setChecked(True)
+    qtbot.mouseClick(ptab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: ptab.run_button.isEnabled(), timeout=5000)
+    assert ptab.last_result is not None
+
+    mtab = window.metrics_tab
+    qtbot.mouseClick(mtab.source_pipeline_button, Qt.MouseButton.LeftButton)
+    assert mtab.frame is not None
+    assert "Loaded pipeline output" in mtab.status_label.text()
+
+
 def test_end_to_end_module_verifier_smoke_reports_failure_without_crashing(qtbot):
     """A module needing real calibration data (offset) fails gracefully, not fatally."""
     window = MainWindow()
