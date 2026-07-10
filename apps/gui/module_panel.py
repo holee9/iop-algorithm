@@ -83,6 +83,11 @@ class ParamsForm(QWidget):
 
     def _add_row(self, key: str) -> QLineEdit:
         edit = QLineEdit(self)
+        edit.setToolTip(
+            f"Value for Params key '{key}'. Parsed as float by default; kept "
+            "as text if it doesn't parse. Left empty, this key is omitted "
+            "from the Params passed to the module."
+        )
         self._layout.addRow(key, edit)
         self._edits[key] = edit
         return edit

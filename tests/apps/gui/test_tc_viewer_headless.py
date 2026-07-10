@@ -418,3 +418,93 @@ def test_resource_and_responsiveness_thresholds_are_externalized():
     assert config.get(T_RSS_LIMIT_MB) > 0
     assert config.get(T_LRU_FRAMES, cast=int) > 0
     assert config.get(T_EVENT_LOOP_MS) > 0
+
+
+# -- Usability: tooltips + Help menu (issue #27) -----------------------------
+
+
+def test_all_interactive_widgets_have_tooltips(qtbot):
+    """Every button/checkbox/combobox/spinbox/slider/line-edit across the
+    three tabs (and the shared CompareDisplay) carries a non-empty tooltip,
+    so a new user can hover any control to learn what it does."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    widgets = []
+    mtab, ptab, mettab = window.module_tab, window.pipeline_tab, window.metrics_tab
+    cd = mtab.compare_display
+
+    widgets += [
+        mtab.io_panel._button, mtab.module_combo, mtab.param_key_edit,
+        mtab.add_param_button, mtab.run_button, mtab.cancel_button,
+        mtab.export_button, mtab.load_expected_button, mtab.progress,
+        mtab.status_label, mtab.history_panel,
+    ]
+    widgets += [
+        ptab.io_panel._button, ptab.run_button, ptab.cancel_button,
+        ptab.export_button, ptab.progress, ptab.status_label,
+    ]
+    widgets += list(ptab.stage_checks.values())
+    widgets += [
+        mettab.source_module_button, mettab.source_pipeline_button,
+        mettab.pitch_spin, mettab.compute_button, mettab.roi_button,
+        mettab.image_plot, mettab.mtf_plot, mettab.roi_label, mettab.status_label,
+    ]
+    widgets += [
+        cd.plot_before, cd.plot_after, cd.plot_diff, cd.mask_opacity,
+        cd.blink_button, cd.probe_label,
+    ]
+    widgets += list(cd.mask_checks.values())
+
+    empty = [w for w in widgets if not w.toolTip().strip()]
+    assert not empty, f"{len(empty)} widget(s) have no tooltip: {[type(w).__name__ for w in empty]}"
+
+
+def test_dynamic_param_field_carries_a_tooltip(qtbot):
+    """A field added at runtime via `ParamsForm.add_field` also gets a tooltip
+    (not just the fields declared at construction time)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    tab = window.module_tab
+    qtbot.keyClicks(tab.param_key_edit, "some_param")
+    qtbot.mouseClick(tab.add_param_button, Qt.MouseButton.LeftButton)
+    assert tab.params_form._edits["some_param"].toolTip().strip()
+
+
+def test_help_menu_how_to_use_opens_usage_dialog(qtbot):
+    """The Help menu's 'How to use...' action opens a dialog covering all
+    three tabs -- the in-app usage guide requested alongside tooltips."""
+    from apps.gui.help_dialog import HelpDialog
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    dialog = HelpDialog(window)
+    qtbot.addWidget(dialog)
+    html = dialog.browser.toHtml()
+    for needle in ("Module Verifier", "Pipeline Viewer", "Metrics", "PASS", "ROI"):
+        assert needle in html, f"help text missing coverage of '{needle}'"
+
+
+def test_help_menu_about_action_shows_about_box(qtbot, monkeypatch):
+    """The Help menu's 'About' action invokes QMessageBox.about with the
+    project's identifying text (patched to avoid blocking on a real modal)."""
+    from qtpy.QtWidgets import QMessageBox
+
+    calls = []
+    monkeypatch.setattr(
+        QMessageBox, "about", staticmethod(lambda parent, title, text: calls.append((title, text)))
+    )
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._show_about_dialog()
+
+    assert len(calls) == 1
+    title, text = calls[0]
+    assert "XDET" in title
+    assert "SPEC-VIEWER-001" in text

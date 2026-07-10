@@ -42,6 +42,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSlider,
@@ -51,6 +52,7 @@ from qtpy.QtWidgets import (
 )
 
 from apps.gui.export import export_frame, import_frame
+from apps.gui.help_dialog import ABOUT_TEXT, HelpDialog
 from apps.gui.history_panel import HistoryPanel
 from apps.gui.io_panel import DataWriteRejectedError, IoPanel
 from apps.gui.layers import (
@@ -94,21 +96,54 @@ class CompareDisplay(QWidget):
     duplicated (and drifting) across both tabs.
     """
 
+    _MASK_TOOLTIPS = {
+        MaskFlag.DEFECT: "Toggle the DEFECT overlay -- bad/dead pixel map.",
+        MaskFlag.SATURATION: "Toggle the SATURATION overlay -- over/under-range pixels.",
+        MaskFlag.INTERPOLATION: "Toggle the INTERPOLATION overlay -- defect-corrected pixels.",
+        MaskFlag.SATURATION_BAND: (
+            "Toggle the SATURATION_BAND overlay -- the dilated boundary "
+            "buffer ring around saturated pixels."
+        ),
+    }
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.plot_before = pg.PlotWidget(self)
+        self.plot_before.setToolTip(
+            "Input (before) frame -- float32 values rendered via W/L levels only."
+        )
         self.plot_after = pg.PlotWidget(self)
+        self.plot_after.setToolTip(
+            "Output (after) frame with mask overlays -- hover here to read "
+            "the exact stored float32 value at a pixel (C-03)."
+        )
         self.plot_diff = pg.PlotWidget(self)
+        self.plot_diff.setToolTip(
+            "Signed difference (after - before), 0-centered diverging "
+            "colormap (C-06)."
+        )
         self.mask_checks: dict[MaskFlag, QCheckBox] = {
             flag: QCheckBox(flag.name, self) for flag in _MASK_FLAGS
         }
-        for check in self.mask_checks.values():
+        for flag, check in self.mask_checks.items():
             check.setChecked(True)
+            check.setToolTip(self._MASK_TOOLTIPS[flag])
         self.mask_opacity = QSlider(Qt.Orientation.Horizontal, self)
         self.mask_opacity.setRange(0, 100)
         self.mask_opacity.setValue(50)
+        self.mask_opacity.setToolTip(
+            "Shared opacity (0-100%) for all currently visible mask overlays."
+        )
         self.blink_button = QPushButton("Blink toggle", self)
+        self.blink_button.setToolTip(
+            "Toggle the Output view between the before and after image "
+            "(single-key blink comparison, C-05)."
+        )
         self.probe_label = QLabel("Probe: hover over Output once a run completes", self)
+        self.probe_label.setToolTip(
+            "Shows the exact stored float32 value (not the rendered color) "
+            "at the pixel under the mouse in the Output view."
+        )
         self.wl_container = QWidget(self)
         self._wl_layout = QVBoxLayout(self.wl_container)
 
@@ -206,25 +241,57 @@ class ModuleVerifierTab(QWidget):
         self.io_panel = IoPanel(self)
         self.module_combo = QComboBox(self)
         self.module_combo.addItems(sorted(default_registry()))
+        self.module_combo.setToolTip(
+            "Select one processing module (stage) to run directly via "
+            "ProcessModule.process() (REQ-VIEW-RUN-1)."
+        )
         self.params_form = ParamsForm(keys=(), parent=self)
         self.param_key_edit = QLineEdit(self)
         self.param_key_edit.setPlaceholderText("param name (see modules/<stage>.py P_* constants)")
+        self.param_key_edit.setToolTip(
+            "Exact Params key name the selected module needs (see the P_* "
+            "constants documented in modules/<stage>.py), then click "
+            "'Add param field'."
+        )
         self.add_param_button = QPushButton("Add param field", self)
+        self.add_param_button.setToolTip(
+            "Add a text field for the typed Params key name so you can "
+            "enter its value below."
+        )
         self.add_param_button.clicked.connect(self._on_add_param_clicked)
         self.run_button = QPushButton("Run module", self)
+        self.run_button.setToolTip(
+            "Run the selected module against the loaded frame on a "
+            "background thread (REQ-VIEW-ARCH-8)."
+        )
         self.run_button.clicked.connect(self._on_run_clicked)
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.setEnabled(False)
+        self.cancel_button.setToolTip(
+            "Best-effort cancel: discards the result once the background "
+            "run completes (does not interrupt the computation itself)."
+        )
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.export_button = QPushButton("Export output...", self)
+        self.export_button.setToolTip(
+            "Export the last run's output XFrame to a chosen path (npz + "
+            "JSON sidecar, #17). Refused if the path is under data/ (C-20)."
+        )
         self.export_button.clicked.connect(self._on_export_clicked)
         self.load_expected_button = QPushButton("Load expected (optional)...", self)
+        self.load_expected_button.setToolTip(
+            "Load a previously-exported XFrame as the 'expected' golden for "
+            "fixture verification -- enables a PASS/FAIL badge next to the "
+            "run status via run_harness."
+        )
         self.load_expected_button.clicked.connect(self._on_load_expected_clicked)
         self.expected_frame: XFrame | None = None
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 0)  # indeterminate (no per-stage % from the engine)
         self.progress.setVisible(False)
+        self.progress.setToolTip("A module run is in progress on a background thread.")
         self.status_label = QLabel("No run yet", self)
+        self.status_label.setToolTip("Shows the result or error of the last action.")
         self.compare_display = CompareDisplay(self)
         # Aliases kept for the existing e2e smoke tests, which reach into
         # `tab.plot_before`/`tab.plot_after` directly.
@@ -368,17 +435,36 @@ class PipelineViewerTab(QWidget):
         self.stage_checks: dict[str, QCheckBox] = {
             stage: QCheckBox(stage, self) for stage in SELECTABLE_STAGES
         }
+        for stage, check in self.stage_checks.items():
+            check.setToolTip(
+                f"Include the '{stage}' stage in this partial pipeline run "
+                "(always executed in CANONICAL_ORDER, regardless of check order)."
+            )
         self.run_button = QPushButton("Run pipeline", self)
+        self.run_button.setToolTip(
+            "Execute the checked stages via run_pipeline on a background "
+            "thread, in CANONICAL_ORDER (REQ-VIEW-RUN-2/ARCH-8)."
+        )
         self.run_button.clicked.connect(self._on_run_clicked)
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.setEnabled(False)
+        self.cancel_button.setToolTip(
+            "Best-effort cancel: discards the result once the background "
+            "run completes (does not interrupt the computation itself)."
+        )
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.export_button = QPushButton("Export final frame...", self)
+        self.export_button.setToolTip(
+            "Export the last run's final XFrame to a chosen path (npz + "
+            "JSON sidecar, #17). Refused if the path is under data/ (C-20)."
+        )
         self.export_button.clicked.connect(self._on_export_clicked)
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
+        self.progress.setToolTip("A pipeline run is in progress on a background thread.")
         self.status_label = QLabel("No run yet", self)
+        self.status_label.setToolTip("Shows the result or error of the last action.")
         self.compare_display = CompareDisplay(self)
         self.plot_before = self.compare_display.plot_before
         self.plot_after = self.compare_display.plot_after
@@ -481,27 +567,54 @@ class MetricsTab(QWidget):
         super().__init__(parent)
         self.frame: XFrame | None = None
         self.source_module_button = QPushButton("Use Module Verifier output", self)
+        self.source_module_button.setToolTip(
+            "Load the Module Verifier tab's last output frame as the metrics source."
+        )
         self.source_pipeline_button = QPushButton("Use Pipeline Viewer output", self)
+        self.source_pipeline_button.setToolTip(
+            "Load the Pipeline Viewer tab's last final frame as the metrics source."
+        )
         self.source_module_button.clicked.connect(lambda: self._load_source("module"))
         self.source_pipeline_button.clicked.connect(lambda: self._load_source("pipeline"))
         self.get_module_frame: Callable[[], XFrame | None] | None = None
         self.get_pipeline_frame: Callable[[], XFrame | None] | None = None
 
         self.image_plot = pg.PlotWidget(self)
+        self.image_plot.setToolTip(
+            "Metrics source frame -- drag the yellow ROI rectangle to move "
+            "or resize it before 'Recompute MTF for ROI'."
+        )
         self.roi = pg.RectROI([10, 10], [40, 40], pen="y")
+        self.roi.setToolTip("ROI used by 'Recompute MTF for ROI' (C-10). Drag to move, corners to resize.")
         self._layer = None
 
         self.pitch_spin = QDoubleSpinBox(self)
         self.pitch_spin.setDecimals(4)
         self.pitch_spin.setRange(0.001, 10.0)
         self.pitch_spin.setValue(0.14)  # detector pitch (CLAUDE.md: CsI, 140um) -- editable, not hardcoded
+        self.pitch_spin.setToolTip(
+            "Detector pixel pitch in mm, used to convert MTF cycles/pixel to "
+            "lp/mm (Nyquist = 1/(2*pitch)). Default 0.14mm = 140um CsI panel."
+        )
         self.compute_button = QPushButton("Compute MTF (full frame)", self)
+        self.compute_button.setToolTip(
+            "Compute MTF over the full source frame via metrics.mtf.compute_mtf "
+            "-- the GUI performs zero calculation itself (C-09)."
+        )
         self.compute_button.clicked.connect(self._on_compute_clicked)
         self.roi_button = QPushButton("Recompute MTF for ROI (round-trip check)", self)
+        self.roi_button.setToolTip(
+            "Recompute MTF restricted to the yellow ROI rectangle, twice, "
+            "and verify the results are bit-identical (reproducibility "
+            "round-trip, C-10/C-16)."
+        )
         self.roi_button.clicked.connect(self._on_roi_clicked)
         self.mtf_plot = pg.PlotWidget(self)
+        self.mtf_plot.setToolTip("MTF curve -- the exact array metrics.mtf.compute_mtf returned.")
         self.roi_label = QLabel("ROI: none selected", self)
+        self.roi_label.setToolTip("The exact ROI boundary used for the last recompute (C-10).")
         self.status_label = QLabel("No metrics computed yet", self)
+        self.status_label.setToolTip("Shows the result or error of the last action.")
 
         source_row = QHBoxLayout()
         source_row.addWidget(self.source_module_button)
@@ -606,9 +719,31 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget(self)
         tabs.addTab(self.module_tab, "Module Verifier")
+        tabs.setTabToolTip(0, "Run one processing module directly and compare input/output.")
         tabs.addTab(self.pipeline_tab, "Pipeline Viewer")
+        tabs.setTabToolTip(1, "Run a CANONICAL_ORDER subset via run_pipeline and compare stages.")
         tabs.addTab(self.metrics_tab, "Metrics")
+        tabs.setTabToolTip(2, "Compute MTF (metrics/ engine delegation) and verify ROI round-trip.")
         self.setCentralWidget(tabs)
+
+        self._build_menu()
+
+    def _build_menu(self) -> None:
+        """Menu bar with a Help menu ('How to use...' + 'About') -- the
+        in-app entry point for usage guidance beyond per-widget tooltips."""
+        help_menu = self.menuBar().addMenu("&Help")
+        how_to_use_action = help_menu.addAction("How to use...")
+        how_to_use_action.setToolTip("Open the usage guide for this app.")
+        how_to_use_action.triggered.connect(self._show_help_dialog)
+        about_action = help_menu.addAction("About")
+        about_action.setToolTip("Show version and SPEC information.")
+        about_action.triggered.connect(self._show_about_dialog)
+
+    def _show_help_dialog(self) -> None:
+        HelpDialog(self).exec()
+
+    def _show_about_dialog(self) -> None:
+        QMessageBox.about(self, "About XDET Verification GUI", ABOUT_TEXT)
 
 
 def main() -> int:

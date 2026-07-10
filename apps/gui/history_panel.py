@@ -25,6 +25,12 @@ class HistoryPanel(QTableWidget):
         self.setHorizontalHeaderLabels(list(_COLUMNS))
         self.setRowCount(0)
         self.setVisible(False)
+        self.setToolTip(
+            "Processing history chain of the displayed output XFrame -- one "
+            "row per module that ran (module_name/version/params_hash/"
+            "calibset_id), in execution order (C-08). Hidden automatically "
+            "when the frame carries no history."
+        )
 
     def show_history(self, history: Sequence[HistoryEntry]) -> None:
         """Populate rows from `history`; hides the panel when `history` is empty (C-08)."""
