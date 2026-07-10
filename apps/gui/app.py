@@ -48,10 +48,9 @@ from apps.gui.pipeline_panel import (
     run_partial_pipeline,
 )
 from apps.gui.worker import CallableWorker
-from common.calibset import CalibKind
 from common.synth_calibset import make_synthetic_calibset
 from modules.registry import default_registry
-from pipeline.orchestrator import _KIND_BY_STAGE
+from pipeline.orchestrator import calib_kind_for_stage
 
 
 class ModuleVerifierTab(QWidget):
@@ -104,9 +103,7 @@ class ModuleVerifierTab(QWidget):
             return
         stage = self.module_combo.currentText()
         module = default_registry()[stage]
-        calib = make_synthetic_calibset(
-            frame.shape, CalibKind(_KIND_BY_STAGE.get(stage, "other"))
-        )
+        calib = make_synthetic_calibset(frame.shape, calib_kind_for_stage(stage))
         params = self.params_form.build_params()
 
         self._cancelled = False

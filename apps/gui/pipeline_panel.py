@@ -19,18 +19,20 @@ module's bound `.process` callable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from common.calibset import CalibKind, CalibSet
+import numpy as np
+
+from common.calibset import CalibSet
 from common.contract import Params
 from common.synth_calibset import make_synthetic_calibset
-from common.xframe import XFrame, new_frame
+from common.xframe import XFrame
 from modules.registry import default_registry
 from pipeline.orchestrator import (
     CANONICAL_ORDER,
     ProcessCallable,
     PipelineDefinition,
-    _KIND_BY_STAGE,
+    calib_kind_for_stage,
     run_pipeline,
 )
 
@@ -50,15 +52,13 @@ def build_pipeline_registry() -> dict[str, ProcessCallable]:
 def build_synthetic_calib_map(
     definition: PipelineDefinition, resolution: tuple[int, int]
 ) -> dict[str, CalibSet]:
-    """Synthetic CalibSet per stage (REQ-VIEW-CORE-3), kind-matched via `_KIND_BY_STAGE`.
+    """Synthetic CalibSet per stage (REQ-VIEW-CORE-3), kind-matched via `calib_kind_for_stage`.
 
-    Mirrors `tests/pipeline/frame_fixtures.py::calib_map_for` -- stages absent
-    from `_KIND_BY_STAGE` (no detector calibration) get `CalibKind.OTHER`.
+    Mirrors `tests/pipeline/frame_fixtures.py::calib_map_for` -- stages with no
+    dedicated detector calibration get `CalibKind.OTHER`.
     """
     return {
-        stage: make_synthetic_calibset(
-            resolution, CalibKind(_KIND_BY_STAGE.get(stage, "other"))
-        )
+        stage: make_synthetic_calibset(resolution, calib_kind_for_stage(stage))
         for stage in definition.stages
     }
 
@@ -88,10 +88,17 @@ def _as_validation_mode(frame: XFrame) -> XFrame:
     "if frame.validation_mode: preserved = preserved + (current,)"); this is the
     sole mechanism REQ-VIEW-RUN-2's stage-by-stage before/after view relies on
     -- no new core hook is added (REQ-VIEW-CORE-4 additive-only constraint).
+
+    Uses `dataclasses.replace` (not `common.xframe.new_frame`, which has no
+    `history`/`intermediates` parameters) so an already-processed frame fed in
+    from `apps.gui.module_panel.run_module` or `apps.gui.export.import_frame`
+    keeps its existing `HistoryEntry` chain -- silently dropping it here would
+    corrupt the audit trail `history_panel.py` displays (found by code review).
     """
     if frame.validation_mode:
         return frame
-    return new_frame(frame.pixel, frame.masks, frame.noise, validation_mode=True)
+    pixel_f64 = np.asarray(frame.pixel, dtype=np.float64)
+    return replace(frame, validation_mode=True, pixel_f64=pixel_f64)
 
 
 def run_partial_pipeline(

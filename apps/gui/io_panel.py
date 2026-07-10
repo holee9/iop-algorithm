@@ -65,9 +65,20 @@ class IoPanel(QWidget):
         if path:
             self.open_raw(path)
 
-    def open_raw(self, raw_path: str | Path, meta_path: str | Path | None = None) -> XFrame:
-        """Load a raw+JSON frame directly (used by both the dialog handler and tests)."""
-        frame = load_raw_frame(raw_path, meta_path)
+    def open_raw(self, raw_path: str | Path, meta_path: str | Path | None = None) -> XFrame | None:
+        """Load a raw+JSON frame directly (used by both the dialog handler and tests).
+
+        Returns `None` (and reports a status message) on malformed input --
+        `load_raw_frame` raises `ValueError` for a missing `resolution` key or
+        a raw/metadata size mismatch, and this is a Qt click-slot call site
+        with no surrounding `CallableWorker`/exception boundary, so letting it
+        propagate would crash the app instead of reporting a load error.
+        """
+        try:
+            frame = load_raw_frame(raw_path, meta_path)
+        except (ValueError, OSError) as exc:
+            self._label.setText(f"Failed to load {Path(raw_path).name}: {exc}")
+            return None
         self.frame = frame
         self.raw_path = Path(raw_path)
         self._label.setText(f"Loaded {self.raw_path.name} {frame.shape}")

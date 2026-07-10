@@ -37,9 +37,9 @@ def _frame(shape: tuple[int, int] = (8, 8)):
 
 def _passthrough_registry_and_calib(stages: tuple[str, ...], shape: tuple[int, int]):
     registry = {s: passthrough.process for s in stages}
-    # Kind-match via the real adapter (offset/gain/etc. are wired in
-    # _KIND_BY_STAGE and the entry gate rejects a mismatched CalibKind even
-    # when the process callable itself is an identity passthrough).
+    # Kind-match via the real adapter (offset/gain/etc. are kind-wired and the
+    # entry gate rejects a mismatched CalibKind even when the process
+    # callable itself is an identity passthrough).
     calib_map = build_synthetic_calib_map(PipelineDefinition(stages), shape)
     return registry, calib_map
 
@@ -88,6 +88,33 @@ def test_partial_pipeline_produces_stage_comparisons_in_order():
     # Passthrough is identity on pixel data; only the history chain grows.
     assert np.array_equal(result.final_frame.pixel, frame.pixel)
     assert len(result.final_frame.history) == len(stages)
+
+
+def test_partial_pipeline_preserves_pre_existing_history():
+    """Regression: `_as_validation_mode` must not drop history already on the
+    input frame (e.g. a module-verifier result re-fed into the pipeline
+    viewer, or a frame re-imported via `apps.gui.export.import_frame`) --
+    found by code review (`new_frame()` has no `history` parameter)."""
+    frame = _frame().record_history(
+        HistoryEntry(
+            module_name="offset",
+            module_version="1.1.0",
+            params_hash="deadbeef",
+            calibset_id="SYNTH-PANEL:offset:8x8:2026-01-01",
+        )
+    )
+    assert not frame.validation_mode  # exercises the non-validation-mode branch
+
+    stages = ("gain",)
+    registry, calib_map = _passthrough_registry_and_calib(stages, frame.shape)
+    result = run_partial_pipeline(frame, stages, registry=registry, calib_map=calib_map)
+
+    assert [entry.module_name for entry in result.final_frame.history] == [
+        "offset",
+        "reference_passthrough",
+    ]
+    # The stage comparison's "before" frame carries the pre-existing entry too.
+    assert result.stage_comparisons[0].before.history[0].module_name == "offset"
 
 
 def test_partial_pipeline_is_subset_of_canonical_order():

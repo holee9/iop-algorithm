@@ -22,7 +22,15 @@ import numpy as np
 T_WL_RESPONSE_MS = "wl_response_ms"  # C-01/SG-2: W/L display-update response budget
 T_COLD_START_S = "cold_start_s"  # C-17/SG-3: cold-start-to-interactive budget
 T_RSS_LIMIT_MB = "rss_limit_mb"  # C-18: resident-memory ceiling for loaded frames
-T_LRU_FRAMES = "lru_frames"  # C-18: max cached frames before LRU eviction (K)
+# C-18: max cached frames before LRU eviction (K).
+# @MX:TODO: [AUTO] NOT YET ENFORCED -- IoPanel (apps/gui/io_panel.py) holds a
+# single `self.frame` slot only (replaced on every load), so there is
+# currently no multi-frame cache for this cap to bound. Registered here so a
+# future multi-frame-loading feature has the `[T]` key ready; whoever adds
+# that cache MUST wire actual LRU eviction against this key rather than
+# treating its mere presence as ARCH-9/C-18 already satisfied (found by code
+# review -- acceptance.md's DoD check for ARCH-9 documents this gap).
+T_LRU_FRAMES = "lru_frames"
 T_EVENT_LOOP_MS = "event_loop_block_ms"  # C-19: max GUI-thread block per long op step
 T_DIFF_RANGE_MODE = "diff_range_mode"  # C-06: diff colormap default-range policy
 

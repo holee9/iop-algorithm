@@ -19,7 +19,7 @@ import numpy as np
 import pyqtgraph as pg
 
 from apps.gui.history_panel import HistoryPanel
-from apps.gui.io_panel import DataWriteRejectedError, guard_output_path
+from apps.gui.io_panel import DataWriteRejectedError, IoPanel, guard_output_path
 from apps.gui.layers import CompareView, make_diff_layer, make_image_layer, make_mask_overlay_layers
 from apps.gui.module_panel import run_module
 from apps.gui.probe import probe_at
@@ -288,3 +288,25 @@ def test_guard_output_path_allows_writes_outside_data_root(tmp_path):
     resolved = guard_output_path(tmp_path / "exports" / "out.npz", project_root=tmp_path)
 
     assert resolved == (tmp_path / "exports" / "out.npz").resolve()
+
+
+# -- REQ-VIEW-CORE-1: malformed raw/JSON input reports an error, never crashes --
+
+
+def test_open_raw_reports_error_on_malformed_metadata_without_raising(qtbot, tmp_path):
+    """Regression: a Qt click-slot call site with no CallableWorker/exception
+    boundary must not let `load_raw_frame`'s ValueError propagate and crash
+    the app (found by code review)."""
+    raw_path = tmp_path / "bad.raw"
+    raw_path.write_bytes(b"\x00" * 8)
+    meta_path = tmp_path / "bad.json"
+    meta_path.write_text("{}", encoding="utf-8")  # missing required "resolution" key
+
+    panel = IoPanel()
+    qtbot.addWidget(panel)
+
+    result = panel.open_raw(raw_path, meta_path)
+
+    assert result is None
+    assert panel.frame is None
+    assert "Failed to load" in panel._label.text()
