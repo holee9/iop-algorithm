@@ -211,3 +211,17 @@ dist-ssr/
 .vercel/
 .netlify/
 .firebase/
+# ===========================================
+# SPEC-REALDATA-001: local ingest build artifacts (regenerable)
+# ===========================================
+# data/edrogi/ holds sidecars + manifest.json + full sample CalibSet npz/json,
+# all regenerable from images/에드로지16BIT/ via scripts/ingest_edrogi.py.
+# Only the small 256^2 ROI fixtures under tests/fixtures/edrogi/ are committed.
+data/edrogi/
+
+# ===========================================
+# SPEC-REALDATA-001: external-reference sample acquisition set (~1.4GB)
+# ===========================================
+# images/ is SAMPLE / plumbing-only test data, held by external reference only
+# (never committed). The authoritative "guiding" set is re-registered later.
+images/

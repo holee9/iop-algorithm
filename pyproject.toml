@@ -52,6 +52,14 @@ pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra"
+# SPEC-REALDATA-001 markers (REQ-REALDATA-CONTRACT-4). `realdata` gates the
+# sample (plumbing-only) acquisition-set arms that skip cleanly when
+# `images/에드로지16BIT/` is absent (REQ-REALDATA-TESTARM-5); `slow` gates the
+# full-resolution 3072^2 downsample smoke (XDET-TC-049).
+markers = [
+    "realdata: sample (plumbing-only) acquisition-set arm; skips when images/에드로지16BIT/ is absent",
+    "slow: long-running full-resolution smoke (e.g. 3072^2 downsample)",
+]
 
 # ---------------------------------------------------------------------------
 # import-linter: declarative layering contract enforcing the dependency
