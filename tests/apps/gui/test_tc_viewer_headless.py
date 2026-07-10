@@ -67,6 +67,15 @@ def test_end_to_end_module_verifier_smoke(qtbot):
     tab.module_combo.setCurrentIndex(index)
 
     qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    # Execution runs on a background CallableWorker thread (REQ-VIEW-ARCH-8):
+    # immediately after the click returns, the GUI-thread handler has already
+    # disabled Run and shown the progress indicator, while the worker itself
+    # is still running in the background.
+    assert not tab.run_button.isEnabled()
+    assert tab.progress.isVisible()
+    # `_on_finished` re-enables Run once the background thread completes.
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert not tab.progress.isVisible()
 
     assert tab.last_result is not None, "clicking Run must produce a ModuleRunResult"
     assert tab.last_result.output_frame.history[-1].module_name == "saturation"
@@ -91,6 +100,7 @@ def test_end_to_end_module_verifier_smoke_reports_failure_without_crashing(qtbot
     tab.module_combo.setCurrentIndex(index)
 
     qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
 
     # offset requires a real O_map (missing from the synthetic CalibSet) and a
     # required Param -- either way, the app must survive and report status text.
@@ -110,10 +120,31 @@ def test_end_to_end_pipeline_viewer_smoke(qtbot):
     tab.stage_checks["saturation"].setChecked(True)
 
     qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
 
     assert tab.last_result is not None
     assert [c.stage for c in tab.last_result.stage_comparisons] == ["saturation"]
     assert "Ran 1 stage(s): saturation" in tab.status_label.text()
+
+
+def test_module_verifier_cancel_discards_result(qtbot):
+    """Clicking Cancel while the worker is running discards the result (REQ-VIEW-ARCH-8)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.module_tab
+    tab.io_panel.frame = _synthetic_frame()
+    tab.module_combo.setCurrentIndex(tab.module_combo.findText("saturation"))
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    assert tab.cancel_button.isEnabled()
+    qtbot.mouseClick(tab.cancel_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+
+    assert tab.last_result is None, "a cancelled run must not populate a result"
+    assert tab.status_label.text() == "Cancelled"
 
 
 def test_module_verifier_reports_when_no_frame_loaded(qtbot):
