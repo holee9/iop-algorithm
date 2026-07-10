@@ -1,0 +1,67 @@
+name: gui
+
+# SPEC-VIEWER-001 CI gates (plan.md SS8). Four independent jobs so a GUI-stack
+# failure never blocks the core golden-model gate (core-no-gui), and vice
+# versa. This repo is uv-only (`python` is not on PATH -- lesson #4).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  core-no-gui:
+    # Proves the GUI introduction never breaks a base install with no [gui]
+    # extras (C-12). `--ignore=tests/apps` is the primary collection guard
+    # (D10); each GUI test module's own `pytest.importorskip("qtpy")` is the
+    # secondary guard against a stray future test file outside tests/apps.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --extra dev
+      - run: uv run pytest --ignore=tests/apps -q
+
+  gui-offscreen:
+    # Headless GUI suite (C-14/C-15): QT_QPA_PLATFORM=offscreen, no xvfb
+    # needed on the Windows runner (napari's xvfb-dependent path was rejected
+    # at the Phase 0 spike -- pyqtgraph runs offscreen natively on Windows).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --extra gui --extra dev
+      - run: uv run pytest tests/apps/gui -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  license-gate:
+    # GPL-only dependency gate; PyQt6 explicitly excluded (C-13). PySide6's
+    # LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only disjunctive license is the
+    # project's declared LGPL choice, not a GPL-only violation (see
+    # tests/apps/gui/test_tc_viewer_arch.py::_is_gpl_only for the classifier
+    # this job's test exercises).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --extra gui --extra dev
+      - run: uv run pytest tests/apps/gui/test_tc_viewer_arch.py -k license -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  import-linter:
+    # Core layering contracts (KEPT, unchanged) + the new apps.gui forbidden
+    # contract (REQ-VIEW-ARCH-1) + its badgui vacuous-pass canary
+    # (REQ-VIEW-ARCH-2, lesson #1). Runs against the [gui] extras environment
+    # so `apps.gui` is fully resolvable for the static analysis.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --extra gui --extra dev
+      - run: uv run lint-imports
+      - run: uv run pytest tests/apps/gui/test_tc_viewer_arch.py -k "forbidden_contract or canary" -q
+        env:
+          QT_QPA_PLATFORM: offscreen

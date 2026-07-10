@@ -18,6 +18,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "import-linter>=2.0",
+    "pip-licenses>=4.0",
 ]
 # GUI verification stack (SPEC-VIEWER-001, GUI_CRITERIA.md SS2). Phase 0 spike
 # (.moai/reports/SPEC-VIEWER-001-spike.md, REQ-VIEW-SPIKE-1~2) measured napari
@@ -59,7 +60,11 @@ addopts = "-ra"
 # each other. Run via: `uv run lint-imports`.
 # ---------------------------------------------------------------------------
 [tool.importlinter]
-root_packages = ["common", "modules", "pipeline", "metrics"]
+# "apps" (SPEC-VIEWER-001, apps/gui/) is a one-way CONSUMER of the core 4
+# layers, added to the graph only so the forbidden contract below can detect
+# an accidental core -> apps.gui reference; it participates in no layers
+# contract (the core layering above is unaffected and stays KEPT).
+root_packages = ["common", "modules", "pipeline", "metrics", "apps"]
 
 [[tool.importlinter.contracts]]
 name = "Processing layers: pipeline -> modules -> common (downward only)"
@@ -122,3 +127,16 @@ name = "Tier gating consumes orchestrator + common only (registry injection: no 
 type = "forbidden"
 source_modules = ["pipeline.tier"]
 forbidden_modules = ["modules", "metrics"]
+
+# SPEC-VIEWER-001 (REQ-VIEW-ARCH-1, C-11): apps/gui/ is a one-way consumer of
+# the core 4 layers. The core must never import it back. Efficacy of this
+# contract (i.e. that it is not a vacuous pass, lesson #1) is proven by the
+# tests/fixtures/badgui/ canary in tests/apps/gui/test_tc_viewer_arch.py,
+# which seeds the mirrored violation in an isolated fixture package (outside
+# this root_packages list) and asserts a SEPARATE, narrowly-scoped
+# import-linter config actually fails on it.
+[[tool.importlinter.contracts]]
+name = "GUI is a one-way consumer: core must never import apps.gui"
+type = "forbidden"
+source_modules = ["common", "modules", "pipeline", "metrics"]
+forbidden_modules = ["apps.gui"]
