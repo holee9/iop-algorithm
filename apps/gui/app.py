@@ -2,14 +2,17 @@
 
 @MX:ANCHOR: [AUTO] `MainWindow` is the single running entry point that wires
 every Phase 1/2 building block (`io_panel`/`module_panel`/`layers`/`probe`/
-`history_panel`/`metrics_panel`/`pipeline_panel`) into one operable app --
-the "GUI 앱으로 동작" requirement, not just a set of independently-tested
-functions. napari is not used (Phase 0 spike fallback, pyqtgraph single path
--- `.moai/reports/SPEC-VIEWER-001-spike.md`).
+`history_panel`/`metrics_panel`/`pipeline_panel`/`export`) into one operable
+app -- the "GUI 앱으로 동작" requirement, not just a set of
+independently-tested functions. napari is not used (Phase 0 spike fallback,
+pyqtgraph single path -- `.moai/reports/SPEC-VIEWER-001-spike.md`).
 @MX:REASON: `tests/apps/gui/test_tc_viewer_headless.py`'s end-to-end smoke
 test drives THIS class (button clicks via qtbot, not the underlying
 functions directly) as the project's real "does the app actually run"
-verification (C-15).
+verification (C-15). `CompareDisplay` below is the single place W/L, diff,
+mask overlays, hover probe, and blink are wired into an actually-visible
+widget tree -- found missing (only unit-tested in isolation, never wired
+into `MainWindow`) via direct user verification of the running app.
 
 Each tab surfaces failures as status text rather than raising -- a module
 requiring a real (non-synthetic) CalibSet payload or specific Params is a
@@ -24,33 +27,174 @@ exists, and REQ-VIEW-CORE-4 forbids adding one).
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Callable
+
+import numpy as np
 import pyqtgraph as pg
+from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QSlider,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from apps.gui.export import export_frame
 from apps.gui.history_panel import HistoryPanel
-from apps.gui.io_panel import IoPanel
-from apps.gui.layers import CompareView, make_image_layer
+from apps.gui.io_panel import DataWriteRejectedError, IoPanel
+from apps.gui.layers import (
+    CompareView,
+    MaskOverlayLayer,
+    WindowLevelControl,
+    make_diff_layer,
+    make_image_layer,
+    make_mask_overlay_layers,
+)
+from apps.gui.metrics_panel import RoiBounds, plot_mtf, recompute_mtf_for_roi, roi_bounds_from_rect_roi
 from apps.gui.module_panel import ModuleRunResult, ParamsForm, run_module
 from apps.gui.pipeline_panel import (
     SELECTABLE_STAGES,
     PipelineRunResult,
     run_partial_pipeline,
 )
+from apps.gui.probe import make_hover_proxy, probe_at, scene_pos_to_pixel
 from apps.gui.worker import CallableWorker
+from common.contract import Params
 from common.synth_calibset import make_synthetic_calibset
+from common.xframe import MaskFlag, XFrame
 from modules.registry import default_registry
 from pipeline.orchestrator import calib_kind_for_stage
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_MASK_FLAGS: tuple[MaskFlag, ...] = (
+    MaskFlag.DEFECT,
+    MaskFlag.SATURATION,
+    MaskFlag.INTERPOLATION,
+    MaskFlag.SATURATION_BAND,
+)
+
+
+class CompareDisplay(QWidget):
+    """Before/after/diff/mask/probe/W-L/blink display block (C-01/02/03/04/05/06/07).
+
+    @MX:ANCHOR: [AUTO] The single wiring point for every REQ-VIEW-IMAGE and
+    REQ-VIEW-COMPARE display requirement, shared by `ModuleVerifierTab` and
+    `PipelineViewerTab` so this wiring exists exactly once instead of being
+    duplicated (and drifting) across both tabs.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.plot_before = pg.PlotWidget(self)
+        self.plot_after = pg.PlotWidget(self)
+        self.plot_diff = pg.PlotWidget(self)
+        self.mask_checks: dict[MaskFlag, QCheckBox] = {
+            flag: QCheckBox(flag.name, self) for flag in _MASK_FLAGS
+        }
+        for check in self.mask_checks.values():
+            check.setChecked(True)
+        self.mask_opacity = QSlider(Qt.Orientation.Horizontal, self)
+        self.mask_opacity.setRange(0, 100)
+        self.mask_opacity.setValue(50)
+        self.blink_button = QPushButton("Blink toggle", self)
+        self.probe_label = QLabel("Probe: hover over Output once a run completes", self)
+        self.wl_container = QWidget(self)
+        self._wl_layout = QVBoxLayout(self.wl_container)
+
+        self._compare_view: CompareView | None = None
+        self._wl_control: WindowLevelControl | None = None
+        self._mask_overlays: dict[MaskFlag, MaskOverlayLayer] = {}
+        self._probe_layers: list = []
+        self._after_layer = None
+
+        for flag, check in self.mask_checks.items():
+            check.toggled.connect(lambda checked, f=flag: self._on_mask_toggle(f, checked))
+        self.mask_opacity.valueChanged.connect(self._on_mask_opacity_changed)
+        self.blink_button.clicked.connect(self._on_blink_clicked)
+        make_hover_proxy(self.plot_after.getViewBox(), self._on_hover)
+
+        plots = QHBoxLayout()
+        plots.addWidget(self.plot_before)
+        plots.addWidget(self.plot_after)
+        plots.addWidget(self.plot_diff)
+        mask_row = QHBoxLayout()
+        for check in self.mask_checks.values():
+            mask_row.addWidget(check)
+        mask_row.addWidget(self.mask_opacity)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.wl_container)
+        layout.addLayout(plots)
+        layout.addLayout(mask_row)
+        layout.addWidget(self.blink_button)
+        layout.addWidget(self.probe_label)
+
+    def show_comparison(self, before_frame: XFrame, after_frame: XFrame) -> None:
+        """Rebuild every layer for a new before/after pair (called after each run)."""
+        self.plot_before.clear()
+        self.plot_after.clear()
+        self.plot_diff.clear()
+
+        before_layer = make_image_layer("before", before_frame.pixel)
+        after_layer = make_image_layer("after", after_frame.pixel)
+        self._compare_view = CompareView(
+            before=before_layer,
+            after=after_layer,
+            plot_before=self.plot_before,
+            plot_after=self.plot_after,
+        )
+        diff_layer = make_diff_layer(before_frame, after_frame)
+        self.plot_diff.addItem(diff_layer.item)
+
+        if self._wl_control is not None:
+            self._wl_layout.removeWidget(self._wl_control)
+            self._wl_control.deleteLater()
+        self._wl_control = WindowLevelControl(after_layer, self.wl_container)
+        self._wl_layout.addWidget(self._wl_control)
+
+        self._mask_overlays = make_mask_overlay_layers(
+            after_frame.masks, opacity=self.mask_opacity.value() / 100.0
+        )
+        for flag, overlay in self._mask_overlays.items():
+            self.plot_after.getPlotItem().addItem(overlay.item)
+            overlay.set_visible(self.mask_checks[flag].isChecked())
+
+        self._after_layer = after_layer
+        self._probe_layers = [before_layer, after_layer, diff_layer]
+
+    def _on_mask_toggle(self, flag: MaskFlag, checked: bool) -> None:
+        overlay = self._mask_overlays.get(flag)
+        if overlay is not None:
+            overlay.set_visible(checked)
+
+    def _on_mask_opacity_changed(self, value: int) -> None:
+        for overlay in self._mask_overlays.values():
+            overlay.set_opacity(value / 100.0)
+
+    def _on_blink_clicked(self) -> None:
+        if self._compare_view is not None:
+            self._compare_view.toggle_blink()
+
+    def _on_hover(self, evt) -> None:
+        if self._after_layer is None:
+            return
+        row, col = scene_pos_to_pixel(self._after_layer.item, evt[0])
+        reading = probe_at(self._probe_layers, row, col)
+        if reading is None:
+            self.probe_label.setText(f"Probe (row={row}, col={col}): out of bounds")
+            return
+        parts = ", ".join(f"{name}={value:.4g}" for name, value in reading.values.items())
+        self.probe_label.setText(f"Probe (row={reading.row}, col={reading.col}): {parts}")
 
 
 class ModuleVerifierTab(QWidget):
@@ -67,12 +211,17 @@ class ModuleVerifierTab(QWidget):
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
+        self.export_button = QPushButton("Export output...", self)
+        self.export_button.clicked.connect(self._on_export_clicked)
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 0)  # indeterminate (no per-stage % from the engine)
         self.progress.setVisible(False)
         self.status_label = QLabel("No run yet", self)
-        self.plot_before = pg.PlotWidget(self)
-        self.plot_after = pg.PlotWidget(self)
+        self.compare_display = CompareDisplay(self)
+        # Aliases kept for the existing e2e smoke tests, which reach into
+        # `tab.plot_before`/`tab.plot_after` directly.
+        self.plot_before = self.compare_display.plot_before
+        self.plot_after = self.compare_display.plot_after
         self.history_panel = HistoryPanel(self)
         self.last_result: ModuleRunResult | None = None
         self._worker: CallableWorker | None = None
@@ -82,16 +231,14 @@ class ModuleVerifierTab(QWidget):
         controls.addWidget(self.module_combo)
         controls.addWidget(self.run_button)
         controls.addWidget(self.cancel_button)
-        plots = QHBoxLayout()
-        plots.addWidget(self.plot_before)
-        plots.addWidget(self.plot_after)
+        controls.addWidget(self.export_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.io_panel)
         layout.addLayout(controls)
         layout.addWidget(self.params_form)
         layout.addWidget(self.progress)
-        layout.addLayout(plots)
+        layout.addWidget(self.compare_display)
         layout.addWidget(self.status_label)
         layout.addWidget(self.history_panel)
 
@@ -130,16 +277,7 @@ class ModuleVerifierTab(QWidget):
             self.status_label.setText("Cancelled")
             return
         self.last_result = result
-        self.plot_before.clear()
-        self.plot_after.clear()
-        before_layer = make_image_layer("input", result.input_frame.pixel)
-        after_layer = make_image_layer("output", result.output_frame.pixel)
-        CompareView(
-            before=before_layer,
-            after=after_layer,
-            plot_before=self.plot_before,
-            plot_after=self.plot_after,
-        )
+        self.compare_display.show_comparison(result.input_frame, result.output_frame)
         self.history_panel.show_history(result.output_frame.history)
         badge = ""
         if result.verification is not None:
@@ -157,6 +295,25 @@ class ModuleVerifierTab(QWidget):
         self.cancel_button.setEnabled(False)
         self.progress.setVisible(False)
 
+    def export_to(self, path: str | Path) -> tuple[Path, Path] | None:
+        """Export the last run's output frame to `path` (#17, C-20). Testable
+        directly, bypassing the file dialog (mirrors `IoPanel.open_raw`)."""
+        if self.last_result is None:
+            self.status_label.setText("Nothing to export yet")
+            return None
+        try:
+            npz_path, json_path = export_frame(self.last_result.output_frame, path, _PROJECT_ROOT)
+        except DataWriteRejectedError as exc:
+            self.status_label.setText(f"Export refused: {exc}")
+            return None
+        self.status_label.setText(f"Exported to {npz_path.name}")
+        return npz_path, json_path
+
+    def _on_export_clicked(self) -> None:  # pragma: no cover - exercised via dialog only
+        path, _ = QFileDialog.getSaveFileName(self, "Export output frame", "", "")
+        if path:
+            self.export_to(path)
+
 
 class PipelineViewerTab(QWidget):
     """Phase 2: pick a CANONICAL_ORDER subset -> run_pipeline -> compare (REQ-VIEW-RUN-2)."""
@@ -172,12 +329,15 @@ class PipelineViewerTab(QWidget):
         self.cancel_button = QPushButton("Cancel", self)
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
+        self.export_button = QPushButton("Export final frame...", self)
+        self.export_button.clicked.connect(self._on_export_clicked)
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
         self.status_label = QLabel("No run yet", self)
-        self.plot_before = pg.PlotWidget(self)
-        self.plot_after = pg.PlotWidget(self)
+        self.compare_display = CompareDisplay(self)
+        self.plot_before = self.compare_display.plot_before
+        self.plot_after = self.compare_display.plot_after
         self.last_result: PipelineRunResult | None = None
         self._worker: CallableWorker | None = None
         self._cancelled = False
@@ -188,16 +348,14 @@ class PipelineViewerTab(QWidget):
         run_row = QHBoxLayout()
         run_row.addWidget(self.run_button)
         run_row.addWidget(self.cancel_button)
-        plots = QHBoxLayout()
-        plots.addWidget(self.plot_before)
-        plots.addWidget(self.plot_after)
+        run_row.addWidget(self.export_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.io_panel)
         layout.addLayout(stage_row)
         layout.addLayout(run_row)
         layout.addWidget(self.progress)
-        layout.addLayout(plots)
+        layout.addWidget(self.compare_display)
         layout.addWidget(self.status_label)
 
     def selected_stages(self) -> tuple[str, ...]:
@@ -236,18 +394,9 @@ class PipelineViewerTab(QWidget):
             self.status_label.setText("Cancelled")
             return
         self.last_result = result
-        self.plot_before.clear()
-        self.plot_after.clear()
         if result.stage_comparisons:
             last = result.stage_comparisons[-1]
-            before_layer = make_image_layer("before", last.before.pixel)
-            after_layer = make_image_layer("after", last.after.pixel)
-            CompareView(
-                before=before_layer,
-                after=after_layer,
-                plot_before=self.plot_before,
-                plot_after=self.plot_after,
-            )
+            self.compare_display.show_comparison(last.before, last.after)
         self.status_label.setText(f"Ran {len(stages)} stage(s): {', '.join(stages)}")
 
     def _on_failed(self, message: str) -> None:
@@ -261,19 +410,160 @@ class PipelineViewerTab(QWidget):
         self.cancel_button.setEnabled(False)
         self.progress.setVisible(False)
 
+    def export_to(self, path: str | Path) -> tuple[Path, Path] | None:
+        """Export the last run's final frame to `path` (#17, C-20)."""
+        if self.last_result is None:
+            self.status_label.setText("Nothing to export yet")
+            return None
+        try:
+            npz_path, json_path = export_frame(self.last_result.final_frame, path, _PROJECT_ROOT)
+        except DataWriteRejectedError as exc:
+            self.status_label.setText(f"Export refused: {exc}")
+            return None
+        self.status_label.setText(f"Exported to {npz_path.name}")
+        return npz_path, json_path
+
+    def _on_export_clicked(self) -> None:  # pragma: no cover - exercised via dialog only
+        path, _ = QFileDialog.getSaveFileName(self, "Export final frame", "", "")
+        if path:
+            self.export_to(path)
+
+
+class MetricsTab(QWidget):
+    """Metrics delegation (C-09) + ROI round-trip (C-10) -- consumes the last
+    Module Verifier / Pipeline Viewer output rather than loading its own file."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.frame: XFrame | None = None
+        self.source_module_button = QPushButton("Use Module Verifier output", self)
+        self.source_pipeline_button = QPushButton("Use Pipeline Viewer output", self)
+        self.source_module_button.clicked.connect(lambda: self._load_source("module"))
+        self.source_pipeline_button.clicked.connect(lambda: self._load_source("pipeline"))
+        self.get_module_frame: Callable[[], XFrame | None] | None = None
+        self.get_pipeline_frame: Callable[[], XFrame | None] | None = None
+
+        self.image_plot = pg.PlotWidget(self)
+        self.roi = pg.RectROI([10, 10], [40, 40], pen="y")
+        self._layer = None
+
+        self.pitch_spin = QDoubleSpinBox(self)
+        self.pitch_spin.setDecimals(4)
+        self.pitch_spin.setRange(0.001, 10.0)
+        self.pitch_spin.setValue(0.14)  # detector pitch (CLAUDE.md: CsI, 140um) -- editable, not hardcoded
+        self.compute_button = QPushButton("Compute MTF (full frame)", self)
+        self.compute_button.clicked.connect(self._on_compute_clicked)
+        self.roi_button = QPushButton("Recompute MTF for ROI (round-trip check)", self)
+        self.roi_button.clicked.connect(self._on_roi_clicked)
+        self.mtf_plot = pg.PlotWidget(self)
+        self.roi_label = QLabel("ROI: none selected", self)
+        self.status_label = QLabel("No metrics computed yet", self)
+
+        source_row = QHBoxLayout()
+        source_row.addWidget(self.source_module_button)
+        source_row.addWidget(self.source_pipeline_button)
+        button_row = QHBoxLayout()
+        button_row.addWidget(QLabel("Pixel pitch (mm)", self))
+        button_row.addWidget(self.pitch_spin)
+        button_row.addWidget(self.compute_button)
+        button_row.addWidget(self.roi_button)
+        plots = QHBoxLayout()
+        plots.addWidget(self.image_plot)
+        plots.addWidget(self.mtf_plot)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(source_row)
+        layout.addLayout(plots)
+        layout.addLayout(button_row)
+        layout.addWidget(self.roi_label)
+        layout.addWidget(self.status_label)
+
+    def _load_source(self, which: str) -> None:
+        getter = self.get_module_frame if which == "module" else self.get_pipeline_frame
+        frame = getter() if getter is not None else None
+        if frame is None:
+            self.status_label.setText(f"No {which} output available yet -- run it first")
+            return
+        self.set_frame(frame)
+        self.status_label.setText(f"Loaded {which} output frame {frame.shape}")
+
+    def set_frame(self, frame: XFrame) -> None:
+        self.frame = frame
+        self._layer = make_image_layer("metrics_source", frame.pixel)
+        self.image_plot.clear()
+        self.image_plot.addItem(self._layer.item)
+        self.image_plot.addItem(self.roi)
+
+    def _params(self) -> Params:
+        # Only pixel pitch varies meaningfully per detector/session and is
+        # user-editable (`pitch_spin`, C-10 measurement input). The remaining
+        # MTF fitting knobs (oversample/edge-angle window) are the same [P]
+        # defaults `tests/metrics/phantoms/params.py::make_params` uses --
+        # tuning constants for the slanted-edge fit, not per-run inputs.
+        return Params({
+            "pixel_pitch_mm": self.pitch_spin.value(),
+            "mtf_oversample": 4,
+            "mtf_angle_min_deg": 1.5,
+            "mtf_angle_max_deg": 3.0,
+            "mtf_angle_margin_deg": 0.2,
+        })
+
+    def _on_compute_clicked(self) -> None:
+        if self.frame is None:
+            self.status_label.setText("Load a source frame first")
+            return
+        try:
+            result = plot_mtf(self.mtf_plot, self.frame, self._params())
+        except Exception as exc:  # noqa: BLE001 -- surfaced as status text (interactive tool)
+            self.status_label.setText(f"MTF computation failed: {exc}")
+            return
+        self.status_label.setText(f"MTF computed: {len(result.get('mtf'))} frequency points")
+
+    def _on_roi_clicked(self) -> None:
+        if self.frame is None:
+            self.status_label.setText("Load a source frame first")
+            return
+        bounds: RoiBounds = roi_bounds_from_rect_roi(self.roi, self.frame.shape)
+        self.roi_label.setText(
+            f"ROI: top={bounds.top} left={bounds.left} height={bounds.height} width={bounds.width}"
+        )
+        try:
+            result_a = recompute_mtf_for_roi(self.frame, self._params(), bounds)
+            result_b = recompute_mtf_for_roi(self.frame, self._params(), bounds)
+        except Exception as exc:  # noqa: BLE001
+            self.status_label.setText(f"ROI recompute failed: {exc}")
+            return
+        match = np.array_equal(result_a.get("mtf"), result_b.get("mtf"))
+        self.status_label.setText(
+            f"ROI round-trip {'MATCH (bit-identical)' if match else 'MISMATCH'} "
+            f"({len(result_a.get('mtf'))} points)"
+        )
+
 
 class MainWindow(QMainWindow):
-    """Verification GUI shell: Module Verifier (Phase 1) + Pipeline Viewer (Phase 2)."""
+    """Verification GUI shell: Module Verifier + Pipeline Viewer + Metrics tabs."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("XDET Verification GUI")
         self.module_tab = ModuleVerifierTab(self)
         self.pipeline_tab = PipelineViewerTab(self)
+        self.metrics_tab = MetricsTab(self)
+        self.metrics_tab.get_module_frame = (
+            lambda: self.module_tab.last_result.output_frame
+            if self.module_tab.last_result is not None
+            else None
+        )
+        self.metrics_tab.get_pipeline_frame = (
+            lambda: self.pipeline_tab.last_result.final_frame
+            if self.pipeline_tab.last_result is not None
+            else None
+        )
 
         tabs = QTabWidget(self)
         tabs.addTab(self.module_tab, "Module Verifier")
         tabs.addTab(self.pipeline_tab, "Pipeline Viewer")
+        tabs.addTab(self.metrics_tab, "Metrics")
         self.setCentralWidget(tabs)
 
 
@@ -292,7 +582,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
-    window.resize(1200, 800)
+    window.resize(1400, 900)
     window.show()
     return app.exec()
 
