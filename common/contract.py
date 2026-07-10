@@ -22,7 +22,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 from common.calibset import CalibSet
 from common.xframe import XFrame, hash_params
@@ -52,6 +52,37 @@ class Params:
     def hash(self) -> str:
         """Deterministic hash of the parameter set (feeds history chain)."""
         return hash_params(self.values)
+
+    def keys(self) -> tuple[str, ...]:
+        """The parameter key names present in this container (introspection)."""
+        return tuple(self.values.keys())
+
+    def missing(self, required: Iterable[str]) -> tuple[str, ...]:
+        """Return the required keys absent from this Params (non-raising).
+
+        # @MX:NOTE: [AUTO] additive consumer-introspection helper (SPEC-ERGO-001,
+        # REQ-ERGO-INTROSPECT-1); the raising counterpart is `validate`. A key is
+        # "missing" when it is not present in the container (`k not in values`),
+        # matching the manifest key-existence semantics used by GUI param forms.
+        """
+        return tuple(k for k in required if k not in self.values)
+
+    def validate(self, required: Iterable[str]) -> None:
+        """Assert every required key is present; raise listing ALL that are not.
+
+        # @MX:NOTE: [AUTO] additive validation surface for consumers (GUI/tests);
+        # collects the FULL missing set before raising (not first-fail), so a
+        # param form can report every gap at once. It does NOT replace or alter a
+        # module's own validation/error types (REQ-ERGO-INTROSPECT-3).
+
+        Raises:
+            ValueError: one or more required keys are absent, naming all of them.
+        """
+        absent = self.missing(required)
+        if absent:
+            raise ValueError(
+                f"Params is missing required key(s): {list(absent)}"
+            )
 
 
 @runtime_checkable

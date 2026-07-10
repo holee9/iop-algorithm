@@ -90,3 +90,44 @@ def require_param(params: Any, key: str, cast: Callable[[Any], _T] = lambda x: x
     if value is None:
         raise MetricReadError(f"missing required parameter '{key}'")
     return cast(value)
+
+
+def metric_view(obj: Any) -> MetricResult:
+    """Normalize a metric-like return value to a uniform MetricResult view.
+
+    # @MX:NOTE: [AUTO] additive return-type unification adapter (SPEC-ERGO-001,
+    # REQ-ERGO-METRIC-1). Lets a generic name->run->render dispatch handle every
+    # metric entry point without a special case. `MetricResult` is returned
+    # unchanged (identity); `metrics.ndt.ThicknessResult` is PROJECTED to a
+    # MetricResult-shaped summary of its scalar fields (method/scale_px/changed).
+    # This is a pure projection: `correct_thickness` still returns ThicknessResult
+    # and its native array fields (flattened/low_freq) are untouched
+    # (REQ-ERGO-METRIC-2, no return-type substitution).
+
+    Args:
+        obj: a MetricResult (identity) or a ThicknessResult (summary projection).
+
+    Raises:
+        TypeError: obj is neither a MetricResult nor a ThicknessResult.
+    """
+    if isinstance(obj, MetricResult):
+        return obj
+    # Deferred import: metrics.ndt imports metrics.result, so importing it at
+    # module load would form a cycle. By the time metric_view runs on a
+    # ThicknessResult, metrics.ndt is already loaded.
+    from metrics.ndt import ThicknessResult
+
+    if isinstance(obj, ThicknessResult):
+        return MetricResult(
+            name="thickness_correction",
+            values={
+                "method": obj.method,
+                "scale_px": obj.scale_px,
+                "changed": obj.changed,
+            },
+            warnings=obj.warnings,
+        )
+    raise TypeError(
+        f"metric_view: unsupported type {type(obj).__name__} "
+        "(expected MetricResult or ThicknessResult)"
+    )

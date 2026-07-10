@@ -78,6 +78,15 @@ P_GRID_RATIO_W = "vgrid_grid_ratio_w"  # grid-ratio conversion weight [T]/[P] (S
 P_LOWSIGNAL_THRESHOLD = "vgrid_lowsignal_threshold"  # low-signal attenuation midpoint [T]
 P_LOWSIGNAL_SOFTNESS = "vgrid_lowsignal_softness"  # attenuation transition width [T]
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+REQUIRED_PARAMS: tuple[str, ...] = (
+    P_ITERATIONS,
+    P_DOWNSAMPLE_LEVELS,
+    P_GRID_RATIO_W,
+    P_LOWSIGNAL_THRESHOLD,
+    P_LOWSIGNAL_SOFTNESS,
+)
+
 # Mask bits whose pixel VALUE is replaced before downsampling so they do not
 # contaminate the low-frequency scatter estimate (EC-5).
 _EXCLUDE_ESTIMATE = np.uint8(

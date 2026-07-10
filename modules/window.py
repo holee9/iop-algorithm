@@ -56,6 +56,19 @@ P_LUM_MIN = "gsdf_lum_min"  # display min luminance L_min (cd/m^2)
 P_LUM_MAX = "gsdf_lum_max"  # display max luminance L_max (cd/m^2)
 P_GSDF_JGRID = "gsdf_jnd_grid_size"  # internal JND inversion grid resolution [P]
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# The GSDF display bounds + P-value scale + collimation/direct-exposure fences
+# are always read (raise-on-missing). VOI selection (override/presets/region/
+# default) and P_GSDF_JGRID have defaults / at-least-one-source semantics and are
+# therefore optional, not part of the required manifest.
+REQUIRED_PARAMS: tuple[str, ...] = (
+    P_LUM_MIN,
+    P_LUM_MAX,
+    P_PVALUE_MAX,
+    P_COLLIM_REL,
+    P_DIRECT_FENCE,
+)
+
 _SATURATION = np.uint8(MaskFlag.SATURATION | MaskFlag.SATURATION_BAND)
 _DEFECT = np.uint8(MaskFlag.DEFECT | MaskFlag.INTERPOLATION)
 

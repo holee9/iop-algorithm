@@ -89,6 +89,18 @@ def _require(params: Params, key: str, cast=float):
     return cast(value)
 
 
+def required_params(params: Params) -> tuple[str, ...]:
+    """Selector-dependent required-Params manifest (SPEC-ERGO-001 REQUIRED_PARAMS).
+
+    # @MX:NOTE: [AUTO] denoise's required key set depends on the method selector
+    # (bm3d | nlm), so it is exposed as a function rather than a constant. It
+    # reuses `_required_keys` (single source) so the manifest can never drift from
+    # what `process` actually requires. Key NAMES only — no numeric values.
+    """
+    method = str(params.get(P_METHOD, "bm3d"))
+    return _required_keys(method)
+
+
 def _required_keys(method: str) -> tuple[str, ...]:
     """The Params keys a denoise run requires, given the selected method."""
     keys = [P_STRENGTH, P_LUT_LAMBDA_MAX, P_LUT_NODES, P_LUT_GH_NODES]

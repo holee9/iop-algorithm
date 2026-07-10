@@ -54,7 +54,13 @@ __all__ = [
     "LagCalibError",
     "LagStateError",
     "LagCorrector",
+    "REQUIRED_PARAMS",
 ]
+
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# lag exposes no [T]/[P] tuning constant — the recursion is fully IRF-determined
+# from CalibSet(LAG) — so its required-Params manifest is empty.
+REQUIRED_PARAMS: tuple[str, ...] = ()
 
 # State XFrame payload dtype is fixed to make serialize/load byte-identical
 # (spec decision 2). This mirrors common.xframe.PIXEL_DTYPE (float32).

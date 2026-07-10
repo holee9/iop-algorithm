@@ -34,6 +34,10 @@ K_ANCHOR_GAINS = "anchor_gains"  # Optional multi-point anchors (SWR-202, [B])
 P_GAIN_MIN = "gain_min"  # valid gain lower bound [T]
 P_GAIN_MAX = "gain_max"  # valid gain upper bound [T]
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest,
+# key NAMES only — never sample values). Derived from the module constants above.
+REQUIRED_PARAMS: tuple[str, ...] = (P_GAIN_MIN, P_GAIN_MAX)
+
 # 16-bit unsigned ceiling ([S] fixed, not tunable — analogous to the raw floor).
 _UPPER_LIMIT = 65535.0
 

@@ -48,6 +48,11 @@ P_WINDOW = "line_noise_profile_window"  # median-filter window length [T] (SWR-5
 P_CUTOFF = "line_noise_highpass_cutoff"  # high-pass cutoff, cycles/sample [T]
 P_CONTAM_K = "line_noise_contam_k"  # k*MAD contamination exclusion (SWR-502, def 6)
 
+# Params key names this module requires (SPEC-ERGO-001 REQUIRED_PARAMS manifest).
+# P_WINDOW/P_CUTOFF are always required; P_CONTAM_K is required on the reference
+# correction path — all three are accessed via the raise-on-missing accessor.
+REQUIRED_PARAMS: tuple[str, ...] = (P_WINDOW, P_CUTOFF, P_CONTAM_K)
+
 # Mask bits excluded from robust profile statistics (REQ-LNSG-LINE-3).
 _EXCLUDE = np.uint8(MaskFlag.DEFECT | MaskFlag.INTERPOLATION | MaskFlag.SATURATION)
 
