@@ -63,18 +63,40 @@ class ParamsForm(QWidget):
 
     One `QLineEdit` per declared key; `build_params()` casts the entered text
     (default `float`, overridable per key) into an immutable `Params` instance.
+
+    @MX:NOTE: [AUTO] `add_field` lets the app add fields at runtime for a
+    module the user selects (no hardcoded per-module key table in `apps/gui`
+    -- SWR Params names are documented per-module in `modules/*.py`, not
+    duplicated here; the user names the key they know a stage needs). Found
+    missing entirely: `ParamsForm` was constructed with `keys=()` in
+    `app.py`, so the running app could never actually accept a Params value
+    for any module regardless of selection (zero prior test coverage caught
+    this -- no test exercised `ParamsForm` at all before this fix).
     """
 
     def __init__(self, keys: Sequence[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._edits: dict[str, QLineEdit] = {}
-        layout = QFormLayout(self)
+        self._layout = QFormLayout(self)
         for key in keys:
-            edit = QLineEdit(self)
-            layout.addRow(key, edit)
-            self._edits[key] = edit
+            self._add_row(key)
+
+    def _add_row(self, key: str) -> QLineEdit:
+        edit = QLineEdit(self)
+        self._layout.addRow(key, edit)
+        self._edits[key] = edit
+        return edit
+
+    def add_field(self, key: str) -> None:
+        """Add a new named field at runtime; a no-op if `key` already exists
+        or is blank (idempotent -- safe to call repeatedly from a UI handler)."""
+        if not key or key in self._edits:
+            return
+        self._add_row(key)
 
     def set_value(self, key: str, value: Any) -> None:
+        if key not in self._edits:
+            self._add_row(key)
         self._edits[key].setText(str(value))
 
     def build_params(self, casts: Mapping[str, Callable[[str], Any]] | None = None) -> Params:
