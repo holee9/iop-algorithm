@@ -1,8 +1,8 @@
 ---
 id: SPEC-VIEWER-001
 title: "검증 GUI — 단위 모듈 검증기 + 파이프라인 비교 뷰어"
-version: 0.1.5
-status: draft
+version: 0.2.0
+status: implemented
 created: 2026-07-10
 updated: 2026-07-10
 author: drake.lee
@@ -11,9 +11,9 @@ issue_number: 14
 labels: [gui, viewer, verification-tool]
 ---
 
-# SPEC-VIEWER-001 구현 계획 (초안) — 검증 GUI
+# SPEC-VIEWER-001 구현 계획 — 검증 GUI
 
-> 상태: **draft** (run 단계 착수 전까지 유지). EARS 확정본은 [spec.md](./spec.md), 인수 기준은 [acceptance.md](./acceptance.md). 근거는 `docs/GUI_CRITERIA.md`(C-01~C-20·SG-1~SG-3·§4 선행 갭·§5 준수사항)·`docs/GUI_REVIEW.md`(§4.5 `apps/gui/` 확정). 소비 대상 계약은 [SPEC-INFRA-001](../SPEC-INFRA-001/spec.md)(`run_harness`·`ProcessModule`·`run_pipeline`·`CANONICAL_ORDER`·XFrame·`MaskFlag`, 변경 없음).
+> 상태: **implemented** — Phase 0→0.5→1→2 + 아키텍처/CI 게이트 전건 완료(2026-07-10). EARS 확정본은 [spec.md](./spec.md), 인수 기준은 [acceptance.md](./acceptance.md). 근거는 `docs/GUI_CRITERIA.md`(C-01~C-20·SG-1~SG-3·§4 선행 갭·§5 준수사항)·`docs/GUI_REVIEW.md`(§4.5 `apps/gui/` 확정). 소비 대상 계약은 [SPEC-INFRA-001](../SPEC-INFRA-001/spec.md)(`run_harness`·`ProcessModule`·`run_pipeline`·`CANONICAL_ORDER`·XFrame·`MaskFlag`, 변경 없음, 전건 KEPT로 재확인됨).
 
 ## 1. 개요
 

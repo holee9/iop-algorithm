@@ -8,7 +8,9 @@ XDET은 X-ray FPD(CsI, 140µm, 3072×3072 / 3072×2560, 16-bit raw) 영상처리
 
 ## 현재 상태
 
-P1은 2026-07-10 완료되었다. 11개 SPEC(T0~T10)이 GitHub 이슈 #1~#12에 대응되어 전건 main 브랜치에 병합 완료되었으며, 최종 테스트 스위트는 **465 passed**이다.
+P1(골든 모델)은 2026-07-10 완료되었다. 11개 SPEC(T0~T10)이 GitHub 이슈 #1~#12에 대응되어 전건 main 브랜치에 병합 완료되었으며, 코어 테스트 스위트는 **465 passed**(`uv run pytest --ignore=tests/apps`)이다.
+
+검증 GUI(SPEC-VIEWER-001, 이슈 #14)는 별도 서브 프로젝트 `apps/gui/`로 2026-07-10 구현 완료되었다. GUI 포함 전체 테스트 스위트는 **533 passed**(`uv run pytest`, `[gui]` extras 설치 시). 상세는 아래 "검증 GUI" 절과 [`.moai/specs/SPEC-VIEWER-001/`](.moai/specs/SPEC-VIEWER-001/) 참조.
 
 상세 완료 이력(SPEC별 커밋, plan-audit 점수 추이, 독립 리뷰에서 발견된 critical/major 결함)은 다음 문서를 참조한다.
 
@@ -32,6 +34,34 @@ P1은 2026-07-10 완료되었다. 11개 SPEC(T0~T10)이 GitHub 이슈 #1~#12에 
 ```bash
 uv run pytest
 ```
+
+## 검증 GUI (`apps/gui/`)
+
+XDET 골든 모델(`common/`·`modules/`·`pipeline/`·`metrics/`)을 수정하지 않고 눈으로 검증하기 위한 도구다(SPEC-VIEWER-001, 이슈 #14). 두 탭으로 구성된다:
+
+- **Module Verifier** — fixture/raw 입력 하나를 선택한 모듈 1개로 직접 실행해 입력/출력/diff/마스크/처리 이력을 비교한다.
+- **Pipeline Viewer** — `CANONICAL_ORDER`의 부분 또는 전체 구간을 실행해 스테이지별 전/후를 비교한다.
+
+핵심 원칙(위반 시 머지 불가):
+
+- **읽기-실행 전용** — `data/` 골든 fixture·CalibSet 파일에 절대 쓰지 않는다. 모든 내보내기는 사용자 지정 디렉터리로만.
+- **지표 자체 계산 0** — MTF/NPS/DQE 등은 기존 `metrics/` 엔진 호출 결과만 표시한다.
+- **단방향 소비** — `apps/gui`는 코어 4계층을 import만 하고, 코어는 `apps.gui`를 절대 import하지 않는다(import-linter forbidden 계약 + 의도적 위반 카나리로 CI 강제).
+
+스택은 **pyqtgraph + PySide6**다(napari는 Phase 0 스파이크에서 Windows 헤드리스 CI 환경(`QT_QPA_PLATFORM=offscreen`)의 OpenGL 컨텍스트 획득 실패로 기각 — 근거: [`.moai/reports/SPEC-VIEWER-001-spike.md`](.moai/reports/SPEC-VIEWER-001-spike.md)).
+
+```bash
+# GUI 의존성 설치 (base 설치에는 포함되지 않음, C-12 격리)
+uv sync --extra gui
+
+# 헤드리스 테스트 실행 (CI와 동일 조건)
+QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/gui -v
+
+# 로컬 CI 4단계 재현 (import-linter → core-no-gui → gui-offscreen → license-gate)
+bash scripts/test.sh          # 또는 pwsh scripts/test.ps1 (Windows)
+```
+
+SPEC/설계 근거: [`.moai/specs/SPEC-VIEWER-001/`](.moai/specs/SPEC-VIEWER-001/)(spec.md/plan.md/acceptance.md), [`docs/GUI_CRITERIA.md`](docs/GUI_CRITERIA.md)(품질 기준 C-01~C-20), CI: [`.github/workflows/gui.yml`](.github/workflows/gui.yml).
 
 ## P2 착수 필요성 — 딥싱크 검토 (Deep-Sync Review)
 

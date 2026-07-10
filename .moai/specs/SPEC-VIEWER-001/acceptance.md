@@ -101,33 +101,36 @@ DoD: **검증 GUI를 단계형(Phase 0→0.5→1→2)으로 성립** — Phase 0
 
 ## 품질 게이트 / Definition of Done
 
+전 항목 완료(2026-07-10). 근거: 헤드리스 GUI 스위트 68/68(`QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/gui`), core-no-gui 465/465(`uv run pytest --ignore=tests/apps`), 전체 회귀 533/533, `scripts/test.sh`(import-linter → core-no-gui → gui-offscreen → license-gate) 4단계 전건 통과.
+
 - [x] Phase 0 스파이크: SG-1(호버 float32 원값)·SG-2(W/L 응답)·SG-3(콜드 스타트) 실측 리포트 산출 완료(SPIKE-1, Scenario 1, XDET-TC-030) — `.moai/reports/SPEC-VIEWER-001-spike.md`
 - [x] Phase 0 폴백: SG 미충족 시 pyqtgraph 폴백 단일 순서 전환 완료(SPIKE-2, Scenario 1, EC-1) — napari SG-3 하드 실패로 pyqtgraph 확정
-- [ ] Phase 게이트 순서: 스파이크 미완 동안 Phase 1 착수 금지(SPIKE-3, Scenario 1)
-- [ ] Phase 0.5 로더: raw 16-bit+JSON → float32 XFrame 생성(CORE-1, Scenario 2, XDET-TC-031)
-- [ ] Phase 0.5 레지스트리: 기본 등록 모듈 집합 반환(CORE-2, Scenario 2)
-- [ ] Phase 0.5 합성 CalibSet: 실측 부재 시 대체 팩토리 제공(CORE-3, Scenario 2, EC-5)
-- [ ] Phase 0.5 계약 보존: `process` 시그니처·`CANONICAL_ORDER`·기존 import-linter 계약 전건 KEPT(CORE-4, Scenario 2)
-- [ ] W/L 조정·수치 입력 → float32 전체 범위 표시 갱신(IMAGE-1, Scenario 3, C-01)
-- [ ] 줌/팬 무복사 연속 상호작용(IMAGE-2, Scenario 3, C-02)
-- [ ] 호버 프로브: 정수 좌표 + 저장 float32 원값(IMAGE-3, Scenario 3, C-03)
-- [ ] 무손실 수신 + 8-bit 매핑 렌더 경로 국한(IMAGE-4, Scenario 3, C-04)
-- [ ] 전/후 연동 나란히 보기(COMPARE-1, Scenario 4, C-05) + 블링크 토글(COMPARE-2, Scenario 4, C-05)
-- [ ] diff 0 중심 diverging 렌더(COMPARE-3, Scenario 4, C-06) + diff 부호 float 프로브(COMPARE-4, Scenario 4, C-06)
-- [ ] 마스크 4종 독립 오버레이(COMPARE-5, Scenario 4, C-07) + 픽셀 정렬(COMPARE-6, Scenario 4, C-07)
-- [ ] 처리 이력 표시(WHERE history 존재) / 부재 시 미표시(COMPARE-7, Scenario 10, C-08)
-- [ ] 모듈 `ProcessModule.process` 실행 → 입력/출력 XFrame 산출(+ expected 동봉 fixture 시 `run_harness` MismatchReport 검증 병행)(RUN-1, Scenario 5, XDET-TC-033)
-- [ ] 파이프라인 `run_pipeline` 부분/전체 → 스테이지별 전/후(RUN-2, Scenario 6, XDET-TC-035)
-- [ ] 지표 플롯 = `metrics/` 엔진 출력 배열 일치(RUN-3, Scenario 5, C-09, XDET-TC-034)
-- [ ] 지표 GUI 계산 0 — 엔진 위임(RUN-4, Scenario 5, EC-6, C-09)
-- [ ] ROI 경계 표기(RUN-5, Scenario 5, C-10) + ROI round-trip 값 일치(RUN-6, Scenario 5, C-10)
-- [ ] 내보내기 사용자 지정 디렉터리 국한(RUN-7, Scenario 7, C-20) + data/ 쓰기 거부(RUN-8, Scenario 7, EC-4, C-20)
-- [ ] import 단방향 유지(ARCH-1, Scenario 8, C-11) + 의도적 위반 카나리 실패(ARCH-2, Scenario 8, EC-2, C-11)
-- [ ] `[gui]`-less base 코어 TC 통과 — core-no-gui 잡은 `pytest --ignore=tests/apps`로 GUI 테스트를 수집에서 배제(ARCH-3, Scenario 8, C-12, XDET-TC-036)
-- [ ] GPL-only 라이선스 게이트 실패(ARCH-4, Scenario 8, EC-3, C-13)
-- [ ] 오프스크린 실행(ARCH-5, Scenario 9, C-14) + 로직 레벨 커버리지(ARCH-6, Scenario 9, C-15, XDET-TC-037)
-- [ ] 결정론 bit-동일(ARCH-7, Scenario 6, C-16)
-- [ ] 장시간 작업 스레드 밖 + 진행/취소(ARCH-8, Scenario 9, C-19) + 다중 프레임 LRU 상한(ARCH-9, Scenario 9, C-18)
-- [ ] 자원 `[T]` 임계 하드코딩 0 — 설정 외부화 · 픽셀 그랩 Windows CI 제외(PARTIAL, C-17/18/19/15)
-- [ ] TC 블록 XDET-TC-030~037 등록 · Gen 1(000~021) 범위·캡스톤 스캔 무간섭 · GUI 테스트 소스 Gen 1 TC id(000~021) 문자열 미포함(「결정 필요/확인 사항」 5, D9)
-- [ ] **단계형 Phase 0→0.5→1→2 순차 게이트 성립 PASS** — Phase 1 CI 통과가 Phase 2 착수 선행 게이트 — DoD
+- [x] Phase 게이트 순서: 스파이크 미완 동안 Phase 1 착수 금지(SPIKE-3, Scenario 1) — Phase 0(스파이크)를 완료·커밋한 뒤에만 Phase 0.5/1 `apps/gui/*.py` 코드를 작성(커밋 이력 0ab9a7b → 이후 순으로 확인)
+- [x] Phase 0.5 로더: raw 16-bit+JSON → float32 XFrame 생성(CORE-1, Scenario 2, XDET-TC-031) — `common/io.py::load_raw_frame`
+- [x] Phase 0.5 레지스트리: 기본 등록 모듈 집합 반환(CORE-2, Scenario 2) — `modules/registry.py::default_registry`
+- [x] Phase 0.5 합성 CalibSet: 실측 부재 시 대체 팩토리 제공(CORE-3, Scenario 2, EC-5) — `common/synth_calibset.py::make_synthetic_calibset`
+- [x] Phase 0.5 계약 보존: `process` 시그니처·`CANONICAL_ORDER`·기존 import-linter 계약 전건 KEPT(CORE-4, Scenario 2) — `tests/apps/gui/test_tc_viewer_core.py`
+- [x] W/L 조정·수치 입력 → float32 전체 범위 표시 갱신(IMAGE-1, Scenario 3, C-01) — `apps/gui/layers.py::WindowLevelControl`
+- [x] 줌/팬 무복사 연속 상호작용(IMAGE-2, Scenario 3, C-02) — pyqtgraph 내장 뷰 변환(`ImageLayer`), 배열 재계산 없음
+- [x] 호버 프로브: 정수 좌표 + 저장 float32 원값(IMAGE-3, Scenario 3, C-03) — `apps/gui/probe.py::probe_at`
+- [x] 무손실 수신 + 8-bit 매핑 렌더 경로 국한(IMAGE-4, Scenario 3, C-04) — `layers.py` `imageAxisOrder="row-major"` + float32 무변형 보관
+- [x] 전/후 연동 나란히 보기(COMPARE-1, Scenario 4, C-05) + 블링크 토글(COMPARE-2, Scenario 4, C-05) — `apps/gui/layers.py::CompareView`
+- [x] diff 0 중심 diverging 렌더(COMPARE-3, Scenario 4, C-06) + diff 부호 float 프로브(COMPARE-4, Scenario 4, C-06) — `make_diff_layer`
+- [x] 마스크 4종 독립 오버레이(COMPARE-5, Scenario 4, C-07) + 픽셀 정렬(COMPARE-6, Scenario 4, C-07) — `make_mask_overlay_layers`
+- [x] 처리 이력 표시(WHERE history 존재) / 부재 시 미표시(COMPARE-7, Scenario 10, C-08) — `apps/gui/history_panel.py`
+- [x] 모듈 `ProcessModule.process` 실행 → 입력/출력 XFrame 산출(+ expected 동봉 fixture 시 `run_harness` MismatchReport 검증 병행)(RUN-1, Scenario 5, XDET-TC-033) — `apps/gui/module_panel.py::run_module`
+- [x] 파이프라인 `run_pipeline` 부분/전체 → 스테이지별 전/후(RUN-2, Scenario 6, XDET-TC-035) — `apps/gui/pipeline_panel.py::run_partial_pipeline`
+- [x] 지표 플롯 = `metrics/` 엔진 출력 배열 일치(RUN-3, Scenario 5, C-09, XDET-TC-034) — `apps/gui/metrics_panel.py::plot_mtf`
+- [x] 지표 GUI 계산 0 — 엔진 위임(RUN-4, Scenario 5, EC-6, C-09) — 배열 일치 테스트로 발산 검출
+- [x] ROI 경계 표기(RUN-5, Scenario 5, C-10) + ROI round-trip 값 일치(RUN-6, Scenario 5, C-10) — `RoiBounds`/`recompute_mtf_for_roi`
+- [x] 내보내기 사용자 지정 디렉터리 국한(RUN-7, Scenario 7, C-20) + data/ 쓰기 거부(RUN-8, Scenario 7, EC-4, C-20) — `apps/gui/export.py` + `io_panel.py::guard_output_path`
+- [x] import 단방향 유지(ARCH-1, Scenario 8, C-11) + 의도적 위반 카나리 실패(ARCH-2, Scenario 8, EC-2, C-11) — pyproject.toml 신규 forbidden 계약 + `tests/fixtures/badgui/`
+- [x] `[gui]`-less base 코어 TC 통과 — core-no-gui 잡은 `pytest --ignore=tests/apps`로 GUI 테스트를 수집에서 배제(ARCH-3, Scenario 8, C-12, XDET-TC-036) — 465/465 확인
+- [x] GPL-only 라이선스 게이트 실패(ARCH-4, Scenario 8, EC-3, C-13) — `test_license_gate_no_gpl_only_dependencies_pyqt6_excluded`, PySide6 LGPL 선택 정확 분류
+- [x] 오프스크린 실행(ARCH-5, Scenario 9, C-14) + 로직 레벨 커버리지(ARCH-6, Scenario 9, C-15, XDET-TC-037) — 68/68, 픽셀 그랩 없음
+- [x] 결정론 bit-동일(ARCH-7, Scenario 6, C-16) — `test_pipeline_diff_layers_are_bit_identical_across_runs`
+- [x] 장시간 작업 스레드 밖 + 진행/취소(ARCH-8, Scenario 9, C-19) — `apps/gui/worker.py::CallableWorker`(QThread) + 부정형 진행률 + 최선노력 취소(코어 훅 추가 없음, REQ-VIEW-CORE-4 준수)
+- [x] 다중 프레임 LRU 상한(ARCH-9, Scenario 9, C-18) — P1 구조: `IoPanel`은 단일 프레임만 보관(`self.frame`, 로드마다 교체)하므로 구조적으로 무한 누적이 없음; `apps/gui/config.py` `T_LRU_FRAMES`를 향후 다중 프레임 캐시 도입 시 사용할 `[T]` 키로 선(先)등록. 명시적 LRU 자료구조는 다중 프레임 로드 기능이 실제로 추가될 때 별건으로 구현(현재 앱은 그 기능 자체가 없어 상한을 둘 대상이 없음).
+- [x] 자원 `[T]` 임계 하드코딩 0 — 설정 외부화 · 픽셀 그랩 Windows CI 제외(PARTIAL, C-17/18/19/15) — `apps/gui/config.py` 전 키 `_require` 가드
+- [x] TC 블록 XDET-TC-030~037 등록 · Gen 1(000~021) 범위·캡스톤 스캔 무간섭 · GUI 테스트 소스 Gen 1 TC id(000~021) 문자열 미포함(「결정 필요/확인 사항」 5, D9) — 정규식 검증(`tc[-_](000..021)` 미검출) + `test_all_gen1_tc_skeletons_are_live` 통과
+- [x] **단계형 Phase 0→0.5→1→2 순차 게이트 성립 PASS** — Phase 1 CI 통과가 Phase 2 착수 선행 게이트 — DoD
