@@ -92,6 +92,14 @@ class WindowLevelControl(QWidget):
         self.layer = layer
         self.low_spin = QDoubleSpinBox(self)
         self.high_spin = QDoubleSpinBox(self)
+        self.low_spin.setToolTip(
+            "Lower contrast limit (W/L) for the Output display. Type an "
+            "exact float32 value -- the render updates immediately (C-01)."
+        )
+        self.high_spin.setToolTip(
+            "Upper contrast limit (W/L) for the Output display. Type an "
+            "exact float32 value -- the render updates immediately (C-01)."
+        )
         for spin in (self.low_spin, self.high_spin):
             spin.setRange(-1.0e30, 1.0e30)
             spin.setDecimals(6)

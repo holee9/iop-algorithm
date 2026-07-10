@@ -53,6 +53,11 @@ class IoPanel(QWidget):
         self.raw_path: Path | None = None
         self._label = QLabel("No file loaded", self)
         self._button = QPushButton("Open raw...", self)
+        self._button.setToolTip(
+            "Load a headerless 16-bit .raw frame + its .json metadata sidecar "
+            "(<name>.raw + <name>.json, 'resolution': [rows, cols] required) "
+            "into a float32 XFrame (lossless, C-04)."
+        )
         self._button.clicked.connect(self._on_open_clicked)
         layout = QVBoxLayout(self)
         layout.addWidget(self._button)
