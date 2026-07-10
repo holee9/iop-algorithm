@@ -13,7 +13,7 @@
 **옵션 C(A+B 통합)를 단계형으로 채택한다** — GUI_REVIEW §4의 옵션 중, 사용자 목표가 "사용 + 검증" 양쪽이므로:
 
 - **Phase 1 (= 옵션 A)**: 단위 모듈 검증기 — fixture/raw 입력 → 모듈 1개 실행 → 입력/출력/마스크/diff 시각화. `run_harness`(`common/contract.py:131`) 직결.
-- **Phase 2 (= 옵션 B)**: 파이프라인 비교 뷰어 — raw+CalibSet → `CANONICAL_ORDER` 부분/전체 실행 → 스테이지별 전/후 + 지표(MTF/NPS/DQE/히스토그램).
+- **Phase 2 (= 옵션 B)**: 파이프라인 비교 뷰어 — raw+CalibSet → `CANONICAL_ORDER` 부분/전체 실행 → 스테이지별 전/후 + 지표(MTF/NPS/DQE).
 - Phase 1이 CI 통과 + 기준 충족으로 완료된 뒤에만 Phase 2 착수. 하나의 앱(탭/도크 전환), 하나의 SPEC(SPEC-VIEWER-001)에서 Phase를 마일스톤으로 구분.
 
 운영 형태는 GUI_REVIEW §4.5 확정대로 `apps/gui/` 서브 프로젝트 + `[gui]` optional extras.
@@ -66,7 +66,7 @@ SPEC-VIEWER-001의 인수 기준은 아래를 인용해 작성한다. 측정과 
 
 ### 지표
 
-- **C-09 지표 계산 위임**: MTF/NPS/히스토그램 등 플롯은 기존 `metrics/` 엔진 호출 결과만 사용 — **GUI 자체 지표 계산 0**. 플롯 값 = 엔진 출력과 배열 단위 일치(테스트로 비교).
+- **C-09 지표 계산 위임**: MTF/NPS/DQE 등 플롯은 기존 `metrics/` 엔진 호출 결과만 사용 — **GUI 자체 지표 계산 0**. 플롯 값 = 엔진 출력과 배열 단위 일치(테스트로 비교). 디스플레이 픽셀 히스토그램은 W/L 렌더 UI(C-01)의 구성요소로 C-09의 위임 대상이 아니다(ImageJ가 B/C 히스토그램과 Analyze>Histogram을 분리하는 관행과 동일).
 - **C-10 ROI 왕복 재현**: 지표용 ROI 선택 시 사용된 정확한 경계를 표기하고, 동일 경계를 하네스에 투입하면 동일 지표 값 재현(round-trip 테스트).
 
 ### 아키텍처·설치

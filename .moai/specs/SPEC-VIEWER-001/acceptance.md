@@ -32,7 +32,7 @@ DoD: **검증 GUI를 단계형(Phase 0→0.5→1→2)으로 성립** — Phase 0
 ### Scenario 5 — Phase 1 실행 · 지표 위임 · ROI round-trip (REQ-VIEW-RUN-1, -3, -4, -5, -6)
 - **Given** fixture/raw 입력과 처리 모듈 1개, 지표 계산용 ROI가 주어져 있다.
 - **When** 사용자가 모듈을 실행하고 지표 플롯을 요청하며 ROI를 선택한다.
-- **Then** (a) 모듈이 `ProcessModule.process`로 직접 실행되어 입력·출력 XFrame이 산출되고(REQ-VIEW-RUN-1, raw·fixture 공통 유일 산출 경로; expected 골든이 동봉된 fixture-verification 모드에서는 `run_harness`의 `MismatchReport`가 검증으로 병행 표시되며 이 하네스는 출력 프레임을 산출하지 않음 — C-05/06/07 생산), (b) 지표 플롯이 기존 `metrics/` 엔진 호출 결과만 사용하고 플롯 값이 엔진 출력과 배열 단위로 일치하며(C-09), (c) GUI 코드 경로가 지표를 계산하지 않고 엔진에 위임하고(C-09 계산 0), (d) 사용된 ROI 경계가 표기되며(C-10), (e) 동일 ROI 경계를 하네스에 투입하면 표시 지표 값과 재계산 값이 일치한다(C-10 round-trip).
+- **Then** (a) 모듈이 `ProcessModule.process`로 직접 실행되어 입력·출력 XFrame이 산출되고(REQ-VIEW-RUN-1, raw·fixture 공통 유일 산출 경로; expected 골든이 동봉된 fixture-verification 모드에서는 `run_harness`의 `MismatchReport`가 검증으로 병행 표시되며 이 하네스는 출력 프레임을 산출하지 않음 — C-05/06/07 생산), (b) 지표 플롯이 기존 `metrics/` 엔진 호출 결과만 사용하고 플롯 값이 엔진 출력과 배열 단위로 일치하며(C-09), (c) GUI 코드 경로가 지표를 계산하지 않고 엔진에 위임하고(C-09 계산 0), (d) 사용된 ROI 경계가 표기되며(C-10), (e) 동일 ROI 경계를 지표 재계산 경로에 투입하면 표시 지표 값과 재계산 값이 일치한다(C-10 round-trip).
 
 ### Scenario 6 — Phase 2 파이프라인 비교 뷰어 · 결정론 (REQ-VIEW-RUN-2, REQ-VIEW-ARCH-7)
 - **Given** raw + 합성 CalibSet 입력과 `CANONICAL_ORDER` 부분/전체 실행 요청이 주어져 있다.
@@ -97,7 +97,7 @@ DoD: **검증 GUI를 단계형(Phase 0→0.5→1→2)으로 성립** — Phase 0
 - 콜드 스타트 10s(C-17)는 스파이크(SG-3)에서 실측하고, RSS 2GB(C-18)·이벤트 루프 200ms(C-19)는 구조 게이트 + `[T]` 설정 외부화로 처리한다. P1은 구조(LRU 상한·스레드 밖 실행·진행/취소)를 성립시키며 하드 절대 수치를 CI 단정으로 고정하지 않는다.
 
 ### 시각 정렬·체감 성능 (REQ-VIEW-COMPARE-6, REQ-VIEW-IMAGE-2, C-02/C-07/C-15)
-- 마스크 오버레이 전 줌 레벨 시각 정렬(C-07)·줌/팬 체감 연속성(C-02)·픽셀 그랩 스크린샷 시각 비교(C-15)는 코드리뷰 설계 규칙이며 Windows CI 자동 단정에서 제외한다(로직 레벨 근사 검증만). Linux xvfb 픽셀 잡은 선택(「결정 필요/확인 사항」 6).
+- 마스크 오버레이 전 줌 레벨 시각 정렬(C-07)·줌/팬 체감 연속성(C-02)·픽셀 그랩 스크린샷 시각 비교(C-15)는 코드리뷰 설계 규칙이며 Windows CI 자동 단정에서 제외한다(로직 레벨 근사 검증만). Linux xvfb 픽셀 그랩 잡은 본 SPEC 범위에 두지 않음(후속 별건 가능, 「결정 필요/확인 사항」 6).
 
 ## 품질 게이트 / Definition of Done
 

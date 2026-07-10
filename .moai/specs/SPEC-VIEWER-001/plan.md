@@ -1,7 +1,7 @@
 ---
 id: SPEC-VIEWER-001
-title: 검증 GUI (단위 모듈 검증기 + 파이프라인 비교 뷰어, 단계형 Phase 0→0.5→1→2)
-version: 0.1.3
+title: "검증 GUI — 단위 모듈 검증기 + 파이프라인 비교 뷰어"
+version: 0.1.4
 status: draft
 created: 2026-07-10
 updated: 2026-07-10
@@ -58,10 +58,9 @@ apps/gui/
 
 common/
   io.py               # [신규 #16] raw 16-bit + 메타데이터 JSON → XFrame 로더 (additive)
+  synth_calibset.py   # [승격 #18] 합성 CalibSet 팩토리 (tests/fixtures → 배포 코드, additive; common/ 단일 배치 — packages 목록 포함으로 배포 가능, REQ-VIEW-CORE-3)
 modules/
   registry.py         # [신규/확장 #15] default_registry() (additive)
-common/
-  synth_calibset.py   # [승격 #18] 합성 CalibSet 팩토리 (tests/fixtures → 배포 코드, additive; common/ 단일 배치 — packages 목록 포함으로 배포 가능, REQ-VIEW-CORE-3)
 
 tests/apps/gui/
   test_tc_viewer_spike.py       # XDET-TC-030 (SG-1~3, 폴백)
@@ -120,14 +119,14 @@ tests/fixtures/badgui/
 | PyQt6/GPL 유입 | pip-licenses allowlist 게이트, PyQt6 명시 배제(REQ-VIEW-ARCH-4) | Medium |
 | 헤드리스 CI 실패(디스플레이 서버) | offscreen + make_napari_viewer/qtbot, 픽셀 그랩 제외(REQ-VIEW-ARCH-5/6) | Medium |
 | 자원 한도 초과(메모리·응답성) | LRU K프레임 상한 + 장시간 작업 스레드 밖·취소(REQ-VIEW-ARCH-8/9); `[T]` 설정 | Medium |
-| Phase 2 범위 팽창(export 스키마) | #17 축소판 최소 내보내기, 상세 스키마 확인(「결정 필요/확인 사항」 3) | Medium |
+| Phase 2 범위 팽창(export 스키마) | #17 축소판 최소 내보내기 + npz+JSON 사이드카 스키마 확정(「결정 필요/확인 사항」 3) | Medium |
 
 ## 7. 마일스톤 (Phase 순차 게이트, 시간 추정 없음)
 
 - **Priority High — Phase 0 (스파이크)**: napari로 SG-1(호버 float32 원값)·SG-2(W/L 응답 `[T]`)·SG-3(콜드 스타트 `[T]`) 실측 → 스파이크 리포트. **미충족 시 pyqtgraph 폴백 확정**(단일 순서). **DoD**: XDET-TC-030 — SG-1~3 실측 리포트 산출 + 폴백 트리거 구조 성립(스택 확정). Phase 1의 선행 게이트. **스파이크 리포트 산출 위치/포맷(F4 확정)**: `.moai/reports/SPEC-VIEWER-001-spike.md` — SG-1~3 각각의 실측값·`[T]` 임계 대비 판정·확정 스택(napari 또는 pyqtgraph)·측정 환경(기기/OS/Python) 필드 필수.
 - **Priority High — Phase 0.5 (선행 코어 갭)**: #16 raw+JSON 로더(`common/io.py`) · #15 모듈 `default_registry` · #18 합성 CalibSet 팩토리 승격 — 전부 additive. **DoD**: XDET-TC-031 — 로더 XFrame 생성 + 레지스트리 집합 반환 + 합성 CalibSet 대체 + **기존 코어 계약·import-linter 계약 전건 KEPT**(SWR-000-6~12 불변).
 - **Priority High — Phase 1 (단위 모듈 검증기)**: 파일 선택 → 모듈 1개 `ProcessModule.process` 실행으로 출력 XFrame 산출(expected 동봉 fixture 시 `run_harness` 검증 병행) → 입력/출력/diff/마스크/이력 시각화(C-01~08) + 지표 위임(C-09)·ROI round-trip(C-10). **DoD**: XDET-TC-032(영상 상호작용)·XDET-TC-033(모듈 검증기 레이어·이력)·XDET-TC-034(지표 위임·ROI) 로직 레벨 통과. **Phase 1 CI 통과·기준 충족이 Phase 2 착수의 선행 게이트.**
-- **Priority Medium — Phase 2 (파이프라인 비교 뷰어)**: raw+CalibSet → `CANONICAL_ORDER` 부분/전체 `run_pipeline` → 스테이지별 전/후 + 지표 플롯(MTF/NPS/히스토그램) + 결정론(C-16). #17 축소판 내보내기(C-20). **DoD**: XDET-TC-035 — 스테이지별 전/후 산출 + 동일 입력 bit-동일 결정론 통과.
+- **Priority Medium — Phase 2 (파이프라인 비교 뷰어)**: raw+CalibSet → `CANONICAL_ORDER` 부분/전체 `run_pipeline` → 스테이지별 전/후 + 지표 플롯(MTF/NPS/DQE) + 결정론(C-16). #17 축소판 내보내기(C-20). **DoD**: XDET-TC-035 — 스테이지별 전/후 산출 + 동일 입력 bit-동일 결정론 통과.
 - **Priority High — 아키텍처·설치·헤드리스·자원 (전 Phase 병행)**: import-linter forbidden + 카나리(C-11) · `[gui]`-less 코어 잡(C-12) · pip-licenses 게이트(C-13) · offscreen 헤드리스(C-14/15) · 자원 LRU·응답성(C-18/19) · data/ 읽기전용(C-20). **DoD**: XDET-TC-036(import 카나리·extras·라이선스)·XDET-TC-037(헤드리스·자원·읽기전용) 통과.
 - 순서 원칙: **Phase 0 → 0.5 → 1 → 2 순차 게이트.** Phase 0(스파이크)로 스택 확정 후 Phase 0.5(코어 갭) 착수. Phase 1은 Phase 0.5 완료 후. Phase 2는 Phase 1 CI 통과 후. 아키텍처·설치·헤드리스·자원(REQ-VIEW-ARCH)은 전 Phase에 걸쳐 병행하되 Phase 0.5부터 CI 잡으로 상시 게이트.
 
@@ -136,7 +135,7 @@ tests/fixtures/badgui/
 구현 대상(F2 확정): 저장소에 `.github/`가 아직 없으므로 CI 잡은 **GitHub Actions 워크플로 신설**(`.github/workflows/gui.yml`, Phase 0.5에서 도입)로 구현하고, 로컬 재현은 기존 `scripts/test.ps1`/`test.sh` 확장으로 동일 명령을 실행한다. 이 저장소는 uv 전용 환경(`python` PATH 부재 — lessons #4)이므로 아래 모든 명령은 `uv run` 접두를 사용한다.
 
 - **core-no-gui**: base 패키지를 `[gui]` extras 없이 설치하고 `uv run pytest --ignore=tests/apps`로 전체 코어 TC(XDET-TC-000~021 포함)만 수집·실행 → 통과. `pyproject` `testpaths=["tests"]` 기본 수집은 `tests/apps/gui/`까지 포함하므로, 배제 메커니즘을 `--ignore=tests/apps`로 고정하고(1차) 각 GUI 테스트 모듈 상단 `pytest.importorskip("napari"/"qtpy")` 가드로 napari/Qt 부재 시 수집 단계 ImportError를 방지한다(2차)(C-12 extras 격리 증명, D10).
-- **gui-offscreen**: `uv pip install .[gui]` + `QT_QPA_PLATFORM=offscreen` + `uv run pytest tests/apps/gui` 실행(napari `make_napari_viewer` / 폴백 qtbot); 픽셀 그랩 시각 단정 제외(C-14/C-15). Linux xvfb 픽셀 잡은 선택(「결정 필요/확인 사항」 6).
+- **gui-offscreen**: `uv pip install .[gui]` + `QT_QPA_PLATFORM=offscreen` + `uv run pytest tests/apps/gui` 실행(napari `make_napari_viewer` / 폴백 qtbot); 픽셀 그랩 시각 단정 제외(C-14/C-15). Linux xvfb 픽셀 그랩 잡은 본 SPEC 범위에 두지 않음(후속 별건 가능, 「결정 필요/확인 사항」 6).
 - **license-gate**: `uv run pip-licenses` allowlist로 GPL-only 의존성 0 확인, PyQt6 명시 배제 → 위반 시 실패(C-13).
 - **import-linter(확장)**: 기존 코어 계층 방향 계약 전건 유지(KEPT) + 신규 forbidden(코어 4계층 → `apps.gui` 금지) + 의도적 위반 카나리(린터 실효 assert, C-11/lesson #1). 카나리는 `tests/fixtures/badgui/`(root_packages 밖)에 코어→`apps.gui` 방향 위반을 심고, 그 패키지를 대상으로 하는 임시 import-linter 설정을 `uv run lint-imports --config <tmp>`(콘솔 스크립트 직접 호출 — `python -m importlinter.cli` 헛통과 금지, lessons #1)로 실행해 `returncode≠0`를 assert한다 — 프로덕션 원본 트리 무변경(`tests/fixtures/badlayers/`·`tests/test_tc000.py test_tc000_B` 선례).
 - 원칙: core-no-gui는 GUI 도입이 순수 라이브러리 설치를 깨지 않음을 상시 증명한다. GUI 잡 실패가 코어 잡을 막지 않도록 잡을 분리한다.

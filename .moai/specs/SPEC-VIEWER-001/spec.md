@@ -1,6 +1,7 @@
 ---
 id: SPEC-VIEWER-001
-version: 0.1.3
+title: "검증 GUI — 단위 모듈 검증기 + 파이프라인 비교 뷰어"
+version: 0.1.4
 status: draft
 created: 2026-07-10
 updated: 2026-07-10
@@ -25,6 +26,7 @@ XDET 영상처리 SW P1(11개 SPEC, T0~T10, `common/ modules/ pipeline/ metrics/
 
 ## HISTORY
 
+- **v0.1.4 (2026-07-10)** — 「결정 필요/확인 사항」 1~6 사용자 확정(딥리서치·저장소 관례 조사 근거)으로 전부 접힘 → 해당 절을 「확정 사항」으로 재작성. **1**: 스택 napari 1순위/pyqtgraph 폴백 유지 + 스택 버전 재확인(2026-07: napari 0.7.1, pyqtgraph 0.14.0) + SG-2/SG-3을 포함한 전 `[T]` 임계 등재 위치를 GUI 전용 설정 모듈 `apps/gui/config.py`로 확정(`modules/window.py`의 `P_*`+`_require` 관례 승계 — 코어 `Params` 아님·`pyproject` tool 섹션 아님). **2·4·5**: 기존 기본값(Phase 0.5 additive·`common/synth_calibset.py` 단일 배치 / `badgui` 픽스처 카나리 / XDET-TC-030~037) 그대로 확정. **3**: #17 Phase 2 축소판 내보내기 스키마 확정 — npz(pixel float32, masks uint8, validation_mode 시 pixel_f64) + JSON 사이드카(noise·validation_mode·history[HistoryEntry 5필드]·array_keys), `CalibSet.save/load` npz+JSON 사이드카 선례 준수, 내보내기 유틸 `apps/gui` 소재. **6**: 자원 `[T]` 설정 외부화 유지 + **Linux xvfb 픽셀 그랩 잡은 본 SPEC 범위에 두지 않음(후속 별건 가능)**으로 확정. **D-M1**: 디스플레이 픽셀 히스토그램을 W/L 렌더 경로 UI(C-01 계열)로 재분류 — 위임 지표(C-09) 목록에서 제외(napari/pyqtgraph HistogramLUTItem/ImageJ/ITK-SNAP/3D Slicer/VGSTUDIO MAX/ISee! 전 뷰어가 픽셀 히스토그램을 표시·대비 UI로 취급, ImageJ는 B/C 히스토그램(렌더)과 Analyze>Histogram(분석)을 명시 분리; `metrics/`에 히스토그램 엔진 부재 확인). **용어 분리(D-m1)**: ROI round-trip 문맥의 "하네스"를 "지표 재계산 경로(metrics 엔진 재호출)"로 분리(run_harness 계약 검증과 구분). **문서 위생**: spec/plan frontmatter `title` 동기화, GUI_REVIEW §4/§5 확정 주석, plan §3 `common/` 블록 병합.
 - **v0.1.3 (2026-07-10)** — 최종 교차검토(evaluator-active, READY-WITH-NOTES, `.moai/reports/SPEC-VIEWER-001-final-crosscheck.md`) F1~F5 반영. **F2**: CI 잡 구현 대상을 GitHub Actions 워크플로 신설(`.github/workflows/gui.yml`) + `scripts/` 확장으로 확정. **F3**: plan §8 명령 예시에 uv 전용 환경 규약(`uv run` 접두) 반영. **F4**: 스파이크 리포트 산출 경로/필수 필드 확정(`.moai/reports/SPEC-VIEWER-001-spike.md`). **F5**: acceptance 분류표에 SPIKE-1 리포트 산출·SG-1 프로브 로직(자동 검출) 귀속 + C-01/C-17 스파이크 실측 처리 대칭화. **F1**은 `docs/GUI_REVIEW.md` addendum으로 별도 반영.
 - **v0.1.2 (2026-07-10)** — plan-audit iter2 **PASS 0.94** 확정 후 잔여 minor 2건 반영. **N1**: plan.md §5 fixture 전략 표·§7 Phase 1 마일스톤의 pre-D1 구본 문구("모듈 1개 `run_harness` 실행"/"run_harness 출력")를 v0.1.1 실행 모델(`process` 유일 산출 + fixture 모드 `run_harness` 검증 병행)로 정정. **N2**: IMAGE-2 무복사 판정을 acceptance 분류표의 코드리뷰 설계 규칙(프로파일러 확인 + 리뷰)으로 귀속.
 - **v0.1.1 (2026-07-10)** — plan-audit iter1(FAIL 0.72) 결함 D1~D10 반영(코드 사실 재검증: `common/contract.py` L131~152, `tests/fixtures/badlayers/`, `pyproject.toml` `packages`/`testpaths`).
@@ -55,8 +57,8 @@ XDET 영상처리 SW P1(11개 SPEC, T0~T10, `common/ modules/ pipeline/ metrics/
 - **읽기-실행 전용(C-20)**: GUI는 `data/` 골든 fixture·CalibSet 파일을 절대 쓰지 않는다. 내보내기는 사용자 지정 출력 디렉터리로만.
 - **단방향 소비(C-11)**: `apps/gui`는 `common`·`modules`·`pipeline`·`metrics`를 import만 하고, 코어 4계층은 `apps.gui`를 import하지 않는다. import-linter forbidden 계약으로 CI에서 강제하며, 의도적 위반 카나리 테스트로 계약의 실효성(헛통과 아님)을 증명한다(lesson #1).
 - **선행 코어 갭(Phase 0.5, GUI_CRITERIA §4)**: #16 raw+JSON 프레임 로더, #15 모듈 `default_registry`, #18 합성 CalibSet 팩토리(배포 코드 승격)는 Phase 1의 load-bearing 전제. 전부 **additive** 구현으로 기존 아키텍처 계약(SWR-000-6~12: `process(XFrame,CalibSet,Params)->XFrame` 단일 시그니처, 순수함수형, 모듈 간 직접 호출 금지, CalibSet 공통 스키마 등)과 **기존 import-linter 계약을 불변 유지**(KEPT)한다. 실측 CalibSet 부재 시 합성 팩토리가 대체한다(T1~T10 테스트가 이미 사용하는 패턴).
-- **헤드리스 CI(C-14/C-15)**: 모든 GUI CI 테스트는 `QT_QPA_PLATFORM=offscreen`(pytest-qt)로 실행하며 Windows 러너에 xvfb를 요구하지 않는다. 로직 레벨 검증은 napari 후보에서 `make_napari_viewer`, 폴백에서 qtbot 기반. 픽셀 그랩/스크린샷 시각 단정은 Windows CI에서 제외한다(napari 문서화된 제약, C-15; Linux xvfb 잡은 선택).
-- **파라미터·수치 정책(HARD)**: 전 `[T]` 임계는 GUI 코드에 하드코딩되지 않고 설정에 외부화된다 — W/L 갱신 응답 100ms(C-01·SG-2), 콜드 스타트 10s(C-17·SG-3), RSS 상한 2GB·LRU K프레임(C-18), 이벤트 루프 블로킹 200ms(C-19), diff 기본 범위 ±max|diff|(C-06). P1은 구조를 성립시키고 `[T]` 수치 단정은 스파이크(SG-3)·구조 게이트·설정으로 처리한다.
+- **헤드리스 CI(C-14/C-15)**: 모든 GUI CI 테스트는 `QT_QPA_PLATFORM=offscreen`(pytest-qt)로 실행하며 Windows 러너에 xvfb를 요구하지 않는다. 로직 레벨 검증은 napari 후보에서 `make_napari_viewer`, 폴백에서 qtbot 기반. 픽셀 그랩/스크린샷 시각 단정은 Windows CI에서 제외한다(napari 문서화된 제약, C-15; Linux xvfb 픽셀 그랩 잡은 본 SPEC 범위에 두지 않음 — 후속 별건 가능).
+- **파라미터·수치 정책(HARD)**: 전 `[T]` 임계는 GUI 코드에 하드코딩되지 않고 **GUI 전용 설정 모듈 `apps/gui/config.py`**에 외부화된다(코어 `P_*` 명명 상수 + `_require` 검증 관례 승계 — `modules/window.py` 선례; 코어 `Params`는 프레임 처리 계약이고 GUI 런타임 예산은 의미가 다르므로 `Params`에 넣지 않으며, `pyproject` tool 섹션은 도구 설정 전용이므로 배제) — W/L 갱신 응답 100ms(C-01·SG-2), 콜드 스타트 10s(C-17·SG-3), RSS 상한 2GB·LRU K프레임(C-18), 이벤트 루프 블로킹 200ms(C-19), diff 기본 범위 ±max|diff|(C-06). P1은 구조를 성립시키고 `[T]` 수치 단정은 스파이크(SG-3)·구조 게이트·설정으로 처리한다.
 - **TC 번호 블록**: GUI TC는 **XDET-TC-030~037**을 사용한다. Gen 1 대상 XDET-TC-000~021은 P1 골든 모델 형상 동결 완료 범위(`tests/test_tc_skeletons.py` `_GEN1_TC_RANGE = range(0,22)`)이며, GUI는 그 범위 밖의 별도 검증 도구 능력이므로 030+ 블록으로 캡스톤 스캔과의 충돌을 회피한다(「결정 필요/확인 사항」 5). 캡스톤 스캔은 `tests/` 전체를 `rglob("*.py")`하므로 신규 `tests/apps/gui/` 소스도 corpus에 포함된다 — 따라서 GUI 테스트 소스는 Gen 1 TC id 문자열(`000`~`021`)을 포함하지 않아, 삭제된 Gen 1 테스트를 '살아있음'으로 오등록하지 않는다(캡스톤 무간섭의 성립 조건, D9).
 - **소비 대상 계약(변경 없음)**: `common/contract.py`(`ProcessModule.process(XFrame,CalibSet,Params)->XFrame` = 출력 XFrame 생산자 · `run_harness(module,input,calib,params,expected)->MismatchReport` = expected 필수·출력 프레임 미반환의 fixture 검증 전용 · `Params`), `common/xframe.py`(XFrame 불변·`MaskFlag`={DEFECT,SATURATION,INTERPOLATION,SATURATION_BAND}·`HistoryEntry`={module_name,module_version,params_hash,calibset_id}), `pipeline/orchestrator.py`(`CANONICAL_ORDER`·`run_pipeline`·`_calibration_gate`), `common/calibset.py`(CalibSet).
 
@@ -96,10 +98,10 @@ XDET 영상처리 SW P1(11개 SPEC, T0~T10, `common/ modules/ pipeline/ metrics/
 
 - **REQ-VIEW-RUN-1 (Event-Driven)** — WHEN 사용자가 fixture 또는 raw 입력과 처리 모듈 1개를 선택하면, THEN 시스템이 그 모듈을 처리 계약 표면으로 직접 실행해 출력 XFrame을 산출하고 입력·출력 XFrame 쌍을 시각화에 제공해야 한다(Phase 1, `ProcessModule.process(XFrame,CalibSet,Params)->XFrame`; raw·fixture 두 입력 모두 `process` 직접 실행이 유일한 출력 산출 경로 — C-05/C-06/C-07 레이어의 생산자. expected 골든 출력이 동봉된 fixture-verification 모드에서는 `run_harness(...,expected)->MismatchReport`를 통과/위반 검증으로 부가 표시하되, 이 하네스는 출력 XFrame을 반환하지 않으므로 시각화 산출 경로와 분리된다 — 측정=판정 분리).
 - **REQ-VIEW-RUN-2 (Event-Driven)** — WHEN 사용자가 파이프라인의 부분 또는 전체 실행을 요청하면, THEN 시스템이 파이프라인을 실행해 스테이지별 전/후 XFrame을 산출해야 한다(Phase 2, `run_pipeline`·`CANONICAL_ORDER`; 스테이지별 비교의 생산자).
-- **REQ-VIEW-RUN-3 (Event-Driven)** — WHEN 지표 플롯(MTF/NPS/히스토그램 등)이 요청되면, THEN 시스템이 기존 `metrics/` 엔진을 호출해 지표 결과를 산출하고 그 결과만 플롯 값으로 사용해야 한다(C-09; 플롯 값 = 엔진 출력과 배열 단위 일치).
+- **REQ-VIEW-RUN-3 (Event-Driven)** — WHEN 지표 플롯(MTF/NPS/DQE 등)이 요청되면, THEN 시스템이 기존 `metrics/` 엔진을 호출해 지표 결과를 산출하고 그 결과만 플롯 값으로 사용해야 한다(C-09; 플롯 값 = 엔진 출력과 배열 단위 일치)(디스플레이 픽셀 히스토그램은 W/L 렌더 경로 UI 구성요소(C-01 계열)로서 본 위임 대상이 아니며, metrics 엔진 내부의 통계 계산과도 무관하다).
 - **REQ-VIEW-RUN-4 (Ubiquitous)** — 시스템은 모든 지표 산출을 GUI 코드 경로에서 계산하지 않고 `metrics/` 엔진에 위임해야 한다(C-09 GUI 자체 지표 계산 0 — 금지 불변식).
 - **REQ-VIEW-RUN-5 (Event-Driven)** — WHEN 지표 계산용 ROI가 선택되면, THEN 시스템이 사용된 정확한 경계를 표기해야 한다(C-10).
-- **REQ-VIEW-RUN-6 (State-Driven)** — WHILE 동일 ROI 경계가 하네스에 투입되는 동안, 표시 지표 값과 하네스 재계산 값이 일치해야 한다(C-10 round-trip 재현; REQ-VIEW-RUN-3 산출 지표 소비).
+- **REQ-VIEW-RUN-6 (State-Driven)** — WHILE 동일 ROI 경계가 지표 재계산 경로(metrics 엔진 재호출)에 투입되는 동안, 표시 지표 값과 재계산 값이 일치해야 한다(C-10 round-trip 재현; REQ-VIEW-RUN-3 산출 지표 소비).
 - **REQ-VIEW-RUN-7 (Event-Driven)** — WHEN 사용자가 내보내기를 요청하면, THEN 시스템이 사용자 지정 출력 디렉터리로만 산출물을 써야 한다(C-20; Phase 2 축소판 내보내기 #17).
 - **REQ-VIEW-RUN-8 (Unwanted)** — IF 어떤 GUI 동작이 `data/` 골든 fixture·CalibSet 파일 쓰기를 시도하면, THEN 시스템은 그 쓰기를 거부해야 한다(C-20 읽기-실행 전용 — 단일 결정론 경로).
 
@@ -119,22 +121,22 @@ XDET 영상처리 SW P1(11개 SPEC, T0~T10, `common/ modules/ pipeline/ metrics/
 
 - **배포·서버·엔트리포인트 없음** — 로컬 검증 앱만 제공한다. 웹 서버·REST 엔드포인트·CLI 배포 엔트리포인트·컨테이너 배포는 P1 범위 밖(GUI_REVIEW: 이 프로젝트에 없는 배포 문제를 푸는 스택 기각).
 - **다중 사용자 없음** — 단일 로컬 사용자 검증 도구다. 세션 관리·인증·동시 접속은 범위 밖.
-- **GUI 내부 지표 계산 없음(C-09)** — MTF/NPS/DQE/히스토그램 등 지표는 기존 `metrics/` 엔진 호출 결과만 사용한다. GUI 코드에 지표 산출 로직을 두지 않는다.
+- **GUI 내부 지표 계산 없음(C-09)** — MTF/NPS/DQE 등 지표는 기존 `metrics/` 엔진 호출 결과만 사용한다. GUI 코드에 지표 산출 로직을 두지 않는다. 디스플레이 픽셀 히스토그램(W/L 보조)은 지표가 아니라 렌더 경로 UI다.
 - **`data/` 쓰기 없음(C-20)** — GUI는 `data/` 골든 fixture·CalibSet을 절대 변경하지 않는다. 모든 내보내기는 사용자 지정 출력 디렉터리로만.
 - **오케스트레이터 표면·코어 계약 변경 없음** — `CANONICAL_ORDER`·`process` 시그니처(SWR-000-6~12)·기존 import-linter 계약은 불변(KEPT). GUI는 소비자이며 선행 코어 갭(#15/#16/#18)도 additive 확장으로만 구현한다.
 - **#19 인체공학 개선 별건(범위 밖)** — 재수출/`REQUIRED_PARAMS`/Params 검증/반환형 통일(이슈 #19)은 GUI 검증기 도입을 차단하지 않는 코어 인체공학 개선으로(GUI_CRITERIA §4 "병행 가능"), 본 SPEC in-scope가 아니라 별도 작업으로 처리한다.
 - **PyQt6 사용 없음** — Qt 바인딩은 PySide6(LGPL)로 고정. PyQt6(GPL/상용)는 라이선스 게이트로 배제(C-13/§2.2).
-- **Windows CI 픽셀 그랩·스크린샷 시각 단정 없음(C-15)** — 헤드리스 CI 검증은 로직 레벨(레이어 생성·수치 적용·프로브 값)만. 픽셀 스크린샷 시각 비교는 Windows CI에서 제외(napari 문서화된 제약; Linux xvfb 잡은 선택).
+- **Windows CI 픽셀 그랩·스크린샷 시각 단정 없음(C-15)** — 헤드리스 CI 검증은 로직 레벨(레이어 생성·수치 적용·프로브 값)만. 픽셀 스크린샷 시각 비교는 Windows CI에서 제외(napari 문서화된 제약; Linux xvfb 픽셀 그랩 잡은 본 SPEC 범위에 두지 않음 — 후속 별건 가능).
 - **Gen 2 항목 없음** — DL·ADR 등 CLAUDE.md Gen 2 항목은 구현하지 않는다. 검증 GUI는 Gen 1 골든 모델 파이프라인만 대상으로 한다.
 - **속도·메모리 미세 최적화 없음** — 검증 도구의 목적은 정확성·재현성이며 렌더/실행 성능 미세 최적화는 범위 밖(자원 `[T]` 상한 준수 외).
 
-## 결정 필요/확인 사항
+## 확정 사항 (구 「결정 필요/확인 사항」 — v0.1.4에서 접힘)
 
-아래는 GUI_CRITERIA·GUI_REVIEW·코어 구현과의 대조에서 남는 열린 질문과 가정 기본값이다. 2는 잠재적 run-blocking(기각 시 선행 SPEC 분리 또는 코어 표면 재검토), 1·3·4·5·6은 확인 항목이다. run 착수 전 확정하고 HISTORY로 접는다.
+아래 6건은 GUI_CRITERIA·GUI_REVIEW·코어 구현 대조에서 남았던 열린 질문으로, v0.1.4에서 사용자 확정(딥리서치·저장소 관례 조사 근거)으로 전부 접혔다. 더 이상 열린 결정이 아니며 run 착수의 선행 확인은 완료되었다(항목 번호는 종전 「결정 필요/확인 사항」 N 교차참조와 동일하게 유지).
 
-1. **[확인] 스택·폴백: napari 1순위 + PySide6, 폴백 pyqtgraph, PyQt6 배제.** GUI_CRITERIA §2 딥리서치 확정. **기본값: napari 임베디드 + magicgui + PySide6를 1순위로 착수하고, 스파이크(SG-1~SG-3) 미충족 시 pyqtgraph 폴백으로 전환**(단일 순서 결정, REQ-VIEW-SPIKE-2). **확인 필요**: SG-2(W/L 응답 100ms)·SG-3(콜드 스타트 10s) `[T]` 임계의 설정 등재 위치. **권장 = napari 1순위 + 스파이크 게이트 폴백 + `[T]` 설정 외부화.**
-2. **[배치 — 잠재적 run-blocking if rejected] 선행 코어 갭 #15/#16/#18 = 본 SPEC Phase 0.5 작업 패키지.** GUI_CRITERIA §4는 이를 별도 선행 SPEC 의존으로 선언하거나 본 SPEC에 포함하도록 요구. **기본값: 본 SPEC의 Phase 0.5 작업 패키지로 포함하되 코어 계약(SWR-000-6~12)·전 import-linter 계약을 불변 유지하는 additive 확장으로 구현**(REQ-VIEW-CORE-1~4). **run-blocking은 오직** 검토자가 코어 갭이 독립 SPEC이어야 한다고 판단하거나 additive로 불가능(코어 표면 변경 필요)하다고 판단할 경우에만 발생. #18 합성 CalibSet 팩토리 배치는 `common/synth_calibset.py` **단일 확정**(REQ-VIEW-CORE-3 "배포 가능" 요건 + `pyproject` `packages`=common/modules/pipeline/metrics가 apps 미포함 → apps/gui 하위는 배포 불가 → 단일 답 강제; plan.md §3). **권장 = Phase 0.5 in-SPEC 작업 패키지, additive only, 계약 KEPT, #18은 `common/` 단일 배치.**
-3. **[확인] 읽기-실행 전용 + 지표 위임.** **기본값: GUI는 `data/`에 절대 쓰지 않고(REQ-VIEW-RUN-8) 내보내기는 사용자 지정 디렉터리로만(REQ-VIEW-RUN-7), 지표는 `metrics/` 엔진 위임(REQ-VIEW-RUN-3/4)**. **확인 필요**: #17(XFrame 직렬화/이력 JSON 내보내기) Phase 2 축소판 범위 — 최소 내보내기(프레임/이력 JSON)만 in-scope, 상세 직렬화 스키마 확정 여부. **권장 = 읽기-실행 전용 + Phase 2 최소 내보내기(#17 축소판), 상세 스키마 확인.**
-4. **[확인] import 격리 카나리.** lesson #1(import-linter 헛통과) 반영. **기본값: 코어 4계층 → `apps.gui` forbidden 계약 + 의도적 위반을 심었을 때 lint가 실제로 실패함을 assert하는 카나리 테스트 동반**(REQ-VIEW-ARCH-1/2). **메커니즘 확정**: `tests/fixtures/badgui/` 전용 픽스처 패키지(`pyproject` `root_packages` 밖 — 실계약 무영향)에 코어→`apps.gui` 방향 위반을 심고, 그 패키지를 대상으로 하는 임시 import-linter 설정을 실행해 실패(`returncode≠0`, 위반 검출 출력 비어있지 않음)를 assert한다. 프로덕션 원본 트리는 무변경 — import-linter는 `root_packages` 트리만 그래프에 올리므로 "프로덕션 트리 밖" 위반이 실계약을 실패시킬 수 없다는 자기모순을 해소하고, 기존 `tests/fixtures/badlayers/` 음성대조(`tests/test_tc000.py` `test_tc000_B_import_linter_detects_violation`) 선례를 그대로 따른다. **권장 = forbidden 계약 + `badgui` 픽스처 임시 설정 카나리(프로덕션 원본 트리 무변경).**
-5. **[확인] TC 번호 블록 XDET-TC-030~037.** Gen 1 XDET-TC-000~021은 P1 골든 모델 형상 동결 완료 범위(`tests/test_tc_skeletons.py` `_GEN1_TC_RANGE = range(0,22)`, 캡스톤 스캔). **기본값: GUI TC는 030~037 신규 블록** — GUI는 `apps/gui/` 별도 검증 도구 능력이므로 Gen 1 범위 밖 블록으로 캡스톤 스캔 간섭을 회피한다. 캡스톤 스캔은 `tests/` 전체를 `rglob`하므로 GUI 테스트 소스는 Gen 1 TC id(`000`~`021`) 문자열을 포함하지 않아 GUI 소스가 Gen 1 TC를 '살아있음'으로 오등록해 Gen 1 테스트 삭제를 마스킹하는 것을 방지한다(D9). **권장 = XDET-TC-030~037, Gen 1 범위와 분리 명시 + GUI 소스 Gen 1 id 문자열 미포함.**
-6. **[확인] 자원 `[T]` 임계·픽셀 그랩.** C-17(콜드 스타트 10s)·C-18(RSS 2GB/LRU K)·C-19(200ms) 및 C-15 픽셀 그랩. **기본값: `[T]` 임계는 설정 외부화 + P1 구조 성립(스파이크 SG-3에서 C-17 실측, C-18/C-19는 구조 게이트), 픽셀 그랩 시각 단정은 Windows CI 제외·로직 레벨만**(REQ-VIEW-ARCH-6~9). **확인 필요**: Linux xvfb 픽셀 그랩 잡을 선택적으로 둘지. **권장 = `[T]` 설정 외부화 + 구조 게이트 + 로직 레벨 검증(픽셀 그랩 제외).**
+1. **[확정] 스택·폴백 = napari 1순위 + PySide6, 폴백 pyqtgraph, PyQt6 배제.** napari 임베디드 + magicgui + PySide6로 착수하고 스파이크(SG-1~SG-3) 미충족 시 pyqtgraph 폴백(단일 순서, REQ-VIEW-SPIKE-2). SG-2(W/L 100ms)·SG-3(콜드 스타트 10s)을 포함한 전 `[T]` 임계의 등재 위치는 **GUI 전용 설정 모듈 `apps/gui/config.py`**로 확정 — 코어 `P_*` 명명 상수 + `_require` 검증 관례를 승계하며(`modules/window.py` 선례), 코어 `Params`(프레임 처리 계약)도 `pyproject` tool 섹션(도구 설정 전용)도 아니다. 스택 버전 재확인(2026-07): napari 0.7.1(PySide6 공식), pyqtgraph 0.14.0. 문헌 근거: W/L ≤100ms(Nielsen 0.1s·RAIL <100ms — 의료 워크스테이션 문헌의 ≤50ms 왕복 권고를 감안한 안전 상한), 콜드 스타트 ≤10s(Nielsen 10s 주의 한계; napari 실측 기동 ~3–5s).
+2. **[확정] 선행 코어 갭 #15/#16/#18 = 본 SPEC Phase 0.5 작업 패키지, additive only, 계약 KEPT.** 코어 계약(SWR-000-6~12)·전 import-linter 계약을 불변 유지하는 additive 확장으로 구현(REQ-VIEW-CORE-1~4). #18 합성 CalibSet 팩토리는 `common/synth_calibset.py` 단일 배치(REQ-VIEW-CORE-3 "배포 가능" 요건 + `pyproject` `packages`가 apps 미포함 → apps/gui 하위 배포 불가 → 단일 답 강제; plan.md §3).
+3. **[확정] 읽기-실행 전용 + 지표 위임 + #17 축소판 스키마 확정.** GUI는 `data/`에 절대 쓰지 않고(REQ-VIEW-RUN-8) 내보내기는 사용자 지정 디렉터리로만(REQ-VIEW-RUN-7), 지표는 `metrics/` 엔진 위임(REQ-VIEW-RUN-3/4). #17 Phase 2 축소판 내보내기 스키마 확정: **npz(arrays: pixel float32, masks uint8, validation_mode 시 pixel_f64) + JSON 사이드카 {noise{alpha,sigma}, validation_mode, history[HistoryEntry 5필드: module_name/module_version/params_hash/calibset_id/extra], array_keys}** — `CalibSet.save/load`의 npz+JSON 사이드카 선례(`common/calibset.py`) 준수, HistoryEntry 전 필드 JSON 호환(`common/xframe.py`), 중간 산출물(intermediates)은 축소판에서 제외, 내보내기 유틸은 `apps/gui`에 위치(코어 표면 불변). 외부 선례: BIDS GeneratedBy / OME 사이드카 최소 교집합.
+4. **[확정] import 격리 카나리 = forbidden 계약 + `badgui` 픽스처 임시 설정.** 코어 4계층 → `apps.gui` forbidden 계약 + `tests/fixtures/badgui/`(`pyproject` `root_packages` 밖 — 실계약 무영향)에 심은 코어→`apps.gui` 위반을 임시 import-linter 설정으로 검출해 `returncode≠0`(위반 출력 비어있지 않음)를 assert(REQ-VIEW-ARCH-1/2, lesson #1). 프로덕션 원본 트리 무변경 — `tests/fixtures/badlayers/`·`test_tc000_B_import_linter_detects_violation` 선례.
+5. **[확정] TC 번호 블록 = XDET-TC-030~037.** Gen 1 XDET-TC-000~021 형상 동결 범위 밖 신규 블록으로 캡스톤 스캔(`tests/test_tc_skeletons.py` `_GEN1_TC_RANGE = range(0,22)`) 간섭 회피 + GUI 테스트 소스는 Gen 1 TC id(`000`~`021`) 문자열 미포함(D9).
+6. **[확정] 자원 `[T]` 임계 설정 외부화 + 픽셀 그랩 Windows CI 제외 + Linux xvfb 픽셀 그랩 잡 미포함.** C-17(콜드 스타트 10s)은 스파이크 SG-3 실측, C-18(RSS 2GB/LRU K)·C-19(200ms)는 구조 게이트 + `[T]` 설정(`apps/gui/config.py`), 픽셀 그랩 시각 단정은 로직 레벨만(REQ-VIEW-ARCH-6~9). **Linux xvfb 픽셀 그랩 잡은 본 SPEC 범위에 두지 않는다** — 어떤 인수 기준도 픽셀 그랩에 의존하지 않고 P1은 정확성 도구이므로 후속 별건으로만 추가 가능.
