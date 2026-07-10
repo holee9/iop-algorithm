@@ -32,7 +32,7 @@ from apps.gui.config import (
     T_RSS_LIMIT_MB,
     default_config,
 )
-from common.xframe import new_frame
+from common.xframe import MaskFlag, new_frame
 
 
 def _synthetic_frame(shape: tuple[int, int] = (16, 16)):
@@ -84,6 +84,95 @@ def test_end_to_end_module_verifier_smoke(qtbot):
     assert len(tab.plot_before.getPlotItem().items) > 0
     assert len(tab.plot_after.getPlotItem().items) > 0
     assert tab.history_panel.isVisible()
+
+
+def test_end_to_end_module_verifier_full_wiring(qtbot, tmp_path):
+    """Click through every REQ-VIEW-IMAGE/COMPARE/RUN control wired into
+    `CompareDisplay`/`ModuleVerifierTab`, not just Run -- found missing (built
+    and unit-tested but never wired into a visible widget) via direct live
+    verification of the running app (diff view, mask overlays, hover probe,
+    W/L control, blink, export were absent from `MainWindow` despite being
+    unit-tested in isolation)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    tab = window.module_tab
+    cd = tab.compare_display
+    shape = (40, 40)
+    pixel = np.zeros(shape, dtype=np.float32)
+    masks = np.zeros(shape, dtype=np.uint8)
+    masks[10:20, 10:20] = int(MaskFlag.SATURATION)
+    tab.io_panel.frame = new_frame(pixel, masks=masks)
+    tab.module_combo.setCurrentIndex(tab.module_combo.findText("saturation"))
+
+    qtbot.mouseClick(tab.run_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: tab.run_button.isEnabled(), timeout=5000)
+    assert tab.last_result is not None
+
+    # C-06 diff view: a real layer was added (before == after here since
+    # saturation.py never touches pixel values, only masks -- diff is exactly 0).
+    assert len(cd.plot_diff.getPlotItem().items) > 0
+
+    # C-07 mask overlay: saturation.py dilates the seeded SATURATION core into
+    # a SATURATION_BAND ring, so both flags are non-empty and independently toggleable.
+    assert np.any(np.asarray(tab.last_result.output_frame.masks) & int(MaskFlag.SATURATION_BAND))
+    sat_overlay = cd._mask_overlays[MaskFlag.SATURATION]
+    qtbot.mouseClick(cd.mask_checks[MaskFlag.SATURATION], Qt.MouseButton.LeftButton)
+    assert sat_overlay.visible is False
+    qtbot.mouseClick(cd.mask_checks[MaskFlag.SATURATION], Qt.MouseButton.LeftButton)
+    assert sat_overlay.visible is True
+    cd.mask_opacity.setValue(75)
+    assert sat_overlay.opacity == pytest.approx(0.75)
+
+    # C-05 blink toggle: a real button click flips the CompareView's visible layer.
+    showing_after_before = cd._compare_view.showing_after
+    qtbot.mouseClick(cd.blink_button, Qt.MouseButton.LeftButton)
+    assert cd._compare_view.showing_after != showing_after_before
+
+    # C-01 W/L control: the real QDoubleSpinBox widgets drive ImageLayer.set_levels.
+    cd._wl_control.high_spin.setValue(123.0)
+    assert cd._after_layer.levels()[1] == pytest.approx(123.0)
+
+    # C-03 hover probe: reads the stored float32 array, not the render LUT.
+    view_box = cd.plot_after.getViewBox()
+    scene_pos = view_box.mapViewToScene(view_box.viewRect().center())
+    cd._on_hover((scene_pos,))
+    assert "Probe (row=" in cd.probe_label.text()
+
+    # #17/C-20 export: a real button-driven save path round-trips through export_frame.
+    out_path = tmp_path / "case1"
+    result = tab.export_to(str(out_path))
+    assert result is not None
+    npz_path, json_path = result
+    assert npz_path.exists() and json_path.exists()
+
+
+def test_end_to_end_metrics_tab_full_wiring(qtbot):
+    """Metrics tab: load a source frame, compute MTF, and verify the ROI
+    round-trip (C-09/C-10) -- found unwired (metrics_panel.py existed and was
+    unit-tested but no Metrics tab existed in `MainWindow`)."""
+    from tests.metrics.phantoms.generators import make_slanted_edge
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    edge = make_slanted_edge(shape=(64, 64), angle_deg=2.0, sigma_px=0.8, pitch_mm=0.14)
+    mtab = window.metrics_tab
+    mtab.set_frame(edge.frame)
+
+    qtbot.mouseClick(mtab.compute_button, Qt.MouseButton.LeftButton)
+    assert "MTF computed" in mtab.status_label.text()
+    assert len(mtab.mtf_plot.getPlotItem().items) > 0
+
+    qtbot.mouseClick(mtab.roi_button, Qt.MouseButton.LeftButton)
+    assert "ROI: top=" in mtab.roi_label.text()
+    assert "MATCH" in mtab.status_label.text(), (
+        f"ROI round-trip must be deterministic (C-16 inheritance): {mtab.status_label.text()}"
+    )
 
 
 def test_end_to_end_module_verifier_smoke_reports_failure_without_crashing(qtbot):
