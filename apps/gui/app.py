@@ -275,3 +275,29 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.module_tab, "Module Verifier")
         tabs.addTab(self.pipeline_tab, "Pipeline Viewer")
         self.setCentralWidget(tabs)
+
+
+def main() -> int:
+    """Launch the verification GUI as a real, standalone process.
+
+    @MX:ANCHOR: [AUTO] The actual `uv run python -m apps.gui.app` entry point
+    -- prior to this, the app could only be exercised through pytest-qt's
+    offscreen `qtbot` harness, which never launches it as a real process a
+    user would run (found via user report, not covered by the Phase 1/2 test
+    suite).
+    """
+    import sys
+
+    from qtpy.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    window.resize(1200, 800)
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised by direct launch, not pytest
+    import sys
+
+    sys.exit(main())
