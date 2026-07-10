@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
-from common.calibset import CalibSet
+from common.calibset import CalibKind, CalibSet
 from common.contract import Params
 from common.xframe import XFrame
 
@@ -160,6 +160,19 @@ _KIND_BY_STAGE: dict[str, str] = {
     # default substitution of the scatter kernel at the entry gate (SWR-000-5).
     "virtual_grid": "scatter",
 }
+
+
+def calib_kind_for_stage(stage: str) -> CalibKind:
+    """Public accessor for the `CalibKind` a `stage` is wired to (REQ-VIEW-CORE-3).
+
+    Stages absent from the internal kind-wiring table have no dedicated
+    detector calibration and are satisfied by `CalibKind.OTHER` (e.g.
+    `grid`/`geometry`/`mse`/`window`). Exposed so consumers outside this
+    module (`apps/gui/`) do not need to import the underscore-prefixed
+    `_KIND_BY_STAGE` mapping directly -- a private name invites silent
+    breakage on a future orchestrator refactor (found by code review).
+    """
+    return CalibKind(_KIND_BY_STAGE.get(stage, CalibKind.OTHER.value))
 
 
 def _calibration_gate(
