@@ -19,6 +19,26 @@ dev = [
     "pytest>=8.0",
     "import-linter>=2.0",
 ]
+# GUI verification stack (SPEC-VIEWER-001, GUI_CRITERIA.md SS2). Phase 0 spike
+# (.moai/reports/SPEC-VIEWER-001-spike.md, REQ-VIEW-SPIKE-1~2) measured napari
+# (1st choice) against SG-1~SG-3 on Windows. SG-3 failed hard: napari's vispy
+# canvas requires a real OpenGL context and Qt's Windows "offscreen" QPA
+# platform does not support createPlatformOpenGLContext, so napari.Viewer()
+# crashes with GLError under the C-14/C-15-mandated headless CI configuration
+# (QT_QPA_PLATFORM=offscreen, no xvfb on Windows runners). Per REQ-VIEW-SPIKE-2
+# this triggers the single-order fallback to pyqtgraph, which was verified to
+# pass SG-1/SG-2/SG-3 under the same offscreen configuration. napari and
+# magicgui are therefore NOT included here (see spike report for rationale) --
+# pyside6 is now listed directly since it is pyqtgraph's Qt binding rather
+# than an napari[pyside6] transitive dependency. PyQt6 remains EXCLUDED
+# (GPL/commercial, C-13). Isolated via extras so the base package installs and
+# passes core TCs without Qt (C-12).
+gui = [
+    "pyqtgraph>=0.14",
+    "pyside6>=6.10",
+    "qtpy>=2.4",
+    "pytest-qt>=4.4",
+]
 
 [tool.setuptools]
 # Flat top-level packages per CLAUDE.md scaffold (no src/ layout).

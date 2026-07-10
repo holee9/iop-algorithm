@@ -101,8 +101,8 @@ DoD: **검증 GUI를 단계형(Phase 0→0.5→1→2)으로 성립** — Phase 0
 
 ## 품질 게이트 / Definition of Done
 
-- [ ] Phase 0 스파이크: SG-1(호버 float32 원값)·SG-2(W/L 응답)·SG-3(콜드 스타트) 실측 리포트 산출(SPIKE-1, Scenario 1, XDET-TC-030)
-- [ ] Phase 0 폴백: SG 미충족 시 pyqtgraph 폴백 단일 순서 전환(SPIKE-2, Scenario 1, EC-1)
+- [x] Phase 0 스파이크: SG-1(호버 float32 원값)·SG-2(W/L 응답)·SG-3(콜드 스타트) 실측 리포트 산출 완료(SPIKE-1, Scenario 1, XDET-TC-030) — `.moai/reports/SPEC-VIEWER-001-spike.md`
+- [x] Phase 0 폴백: SG 미충족 시 pyqtgraph 폴백 단일 순서 전환 완료(SPIKE-2, Scenario 1, EC-1) — napari SG-3 하드 실패로 pyqtgraph 확정
 - [ ] Phase 게이트 순서: 스파이크 미완 동안 Phase 1 착수 금지(SPIKE-3, Scenario 1)
 - [ ] Phase 0.5 로더: raw 16-bit+JSON → float32 XFrame 생성(CORE-1, Scenario 2, XDET-TC-031)
 - [ ] Phase 0.5 레지스트리: 기본 등록 모듈 집합 반환(CORE-2, Scenario 2)
