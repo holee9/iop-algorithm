@@ -28,8 +28,13 @@ _ROOT = Path(__file__).resolve().parent.parent
 # Distinctive sample-derived numbers that must NEVER become a module/EV constant
 # (QUARANTINE-2/4): the 5 CalSet flat-DN levels and the DOSE METER references.
 _SAMPLE_CALSET_LEVELS = ("19008", "22245", "25827", "35685", "47302")
-_SAMPLE_DOSE_DN = ("1700", "1100", "700", "400", "260")
 _SAMPLE_DOSE_TOKENS = ("8.5uGy", "6.5uGy", "3.2uGy", "1.57uGy", "850nGy")
+# The distinctive sample-derived tokens actually enforced by the substring scan.
+# The DOSE-METER *DN* reference values (1700/1100/700/400/260) are intentionally
+# NOT scanned: they are common small integers, so substring matching would raise
+# false positives against unrelated code. The CalSet flat-DN levels and the
+# dose-unit tokens are distinctive enough to serve as the representative
+# enforcement of QUARANTINE-2/4.
 _FORBIDDEN_IN_CODE = _SAMPLE_CALSET_LEVELS + _SAMPLE_DOSE_TOKENS
 
 # Files whose numeric literals must be free of sample-derived provenance.
@@ -99,18 +104,18 @@ def test_c_every_manifest_entry_is_sample_plumbing():
     assert all(e["usage"] == "sample-plumbing" for e in entries)
 
 
-def test_c_manifest_missing_usage_is_detectable():
-    # EC-7: a tampered entry lacking the usage stamp must be caught.
-    entry = ing.make_manifest_entry(
-        raw_path="nps/Bright_NPS_00.raw",
-        folder="nps",
-        filename="Bright_NPS_00.raw",
-        resolution=(3072, 3072),
-        has_result_pair=True,
-    )
-    tampered = dict(entry)
-    tampered.pop("usage")
-    assert tampered.get("usage") != "sample-plumbing"  # detection fires
+def test_c_make_manifest_entry_always_stamps_usage():
+    # QUARANTINE enforcement (EC-7): the manifest builder has NO code path that
+    # yields a sample entry without the usage stamp, regardless of inputs.
+    for resolution in [(3072, 3072), (256, 256)]:
+        entry = ing.make_manifest_entry(
+            raw_path="nps/Bright_NPS_00.raw",
+            folder="nps",
+            filename="Bright_NPS_00.raw",
+            resolution=resolution,
+            has_result_pair=True,
+        )
+        assert entry["usage"] == "sample-plumbing"
 
 
 def test_sample_calibsets_are_labeled_non_authoritative():

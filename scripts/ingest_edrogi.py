@@ -225,8 +225,11 @@ def guard_no_fullres_copy(
     rule (INGEST-4): the 1.4GB full-res raws live only in `images/`; only the
     small 256^2 ROI crops (and non-raw sidecars/manifest/CalibSet) may land under
     `data/`.
-    @MX:REASON: This is the structural analogue of the GUI's C-20 write guard;
-    every ingest write path routes through it so a full-res copy cannot slip in.
+    @MX:REASON: This is the structural analogue of the GUI's C-20 write guard.
+    It is invoked on the data/ sidecar write as the representative data/-write
+    choke point; fixture crops are 256^2 by construction (`write_fixture` asserts
+    non-full-res) and land under tests/, and the ingest walk additionally verifies
+    no full-res file is ever copied -- defense in depth, not a single gate.
     """
     resolved = Path(dest).resolve()
     protected = Path(data_root).resolve()
@@ -342,6 +345,11 @@ def crop_roi(frame, top: int = ROI_TOP, left: int = ROI_LEFT, size: int = ROI_SI
 
 def write_fixture(crop: np.ndarray, dest_base: Path) -> tuple[Path, Path]:
     """Write a `<base>.raw` + `<base>.json` sidecar for a small ROI crop."""
+    if tuple(crop.shape) == FULL_RES:
+        raise RefusedFullResCopyError(
+            f"refusing to write a full-resolution {FULL_RES} fixture: {dest_base} "
+            f"(fixtures must be small ROI crops -- external-reference, INGEST-4)"
+        )
     dest_base.parent.mkdir(parents=True, exist_ok=True)
     raw_path = dest_base.with_suffix(".raw")
     json_path = dest_base.with_suffix(".json")

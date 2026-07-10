@@ -2,7 +2,7 @@
 id: SPEC-REALDATA-001
 title: "샘플(플러밍) 취득세트 외부참조 수집 + 플러밍 검증 아암 + GUI 6-스위트"
 version: 0.2.0
-status: draft
+status: implemented
 created: 2026-07-11
 updated: 2026-07-11
 author: drake.lee
