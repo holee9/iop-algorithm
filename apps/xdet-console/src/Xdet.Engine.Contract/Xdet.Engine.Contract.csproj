@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Durable engine seam (SPEC-XSEAM-001 P1.5). Python-free by design: this is
+       the contract a future NativeXdetEngine (C++/FPGA) implements identically.
+       No pythonnet reference here. -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+# .NET build artifacts (SPEC-XSEAM-001 P1.5 fidelity core)
+bin/
+obj/
+*.log
+
+# Rider / VS
+.vs/
+.idea/
+
+# Re-include the C# solution file: the repo-root .gitignore excludes *.sln
+# (Python-project default), but the xdet-console solution MUST be tracked.
+!*.sln

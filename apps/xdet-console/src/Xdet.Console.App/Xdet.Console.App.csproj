@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- SPEC-XSEAM-001 P1.5 UI skeleton (inherits SPEC-VIEWER-001 C-09/C-11/C-20).
+       WPF thin client: it computes NO DSP. It ONLY drives the durable engine seam
+       (IXdetEngine, fulfilled by PythonNetXdetEngine calling the frozen Python
+       golden) and displays the returned results with ScottPlot. Read-only toward
+       the golden - the UI never writes golden fixtures. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Xdet.Console.App</RootNamespace>
+    <AssemblyName>Xdet.Console.App</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ScottPlot.WPF" Version="5.1.59" />
+  </ItemGroup>
+
+  <!-- Depend on the interface (Contract) for the seam; reference PythonNet for the
+       concrete engine + its diagnostic edge-phantom path used to feed ComputeMtf. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Xdet.Engine.Contract\Xdet.Engine.Contract.csproj" />
+    <ProjectReference Include="..\Xdet.Engine.PythonNet\Xdet.Engine.PythonNet.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,47 @@
+<Window x:Class="Xdet.Console.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sp="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
+        Title="XDET Engine Seam - SPEC-XSEAM-001 P1.5"
+        Height="640" Width="920"
+        Loaded="Window_Loaded">
+    <DockPanel>
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="engine: not initialized" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <TabControl>
+            <!-- Offset stage (SWR-101~104): the seam runs the golden offset on a
+                 small deterministic synthetic frame; the UI only plots input vs
+                 corrected pixels for one row. No pixel math is done here. -->
+            <TabItem Header="Offset">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                        <Button x:Name="OffsetButton" Content="Run offset (synthetic)"
+                                Click="OffsetButton_Click" Padding="10,4" />
+                        <TextBlock x:Name="OffsetInfo" Margin="12,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <sp:WpfPlot x:Name="OffsetPlot" />
+                </DockPanel>
+            </TabItem>
+
+            <!-- MTF metric (measurement protocol 1.2): the adapter renders the golden
+                 slanted-edge phantom, the seam computes the presampled MTF, and the UI
+                 plots the returned frequency vs MTF curve verbatim. -->
+            <TabItem Header="MTF">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                        <Button x:Name="MtfButton" Content="Compute MTF"
+                                Click="MtfButton_Click" Padding="10,4" />
+                        <TextBlock x:Name="MtfInfo" Margin="12,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <sp:WpfPlot x:Name="MtfPlot" />
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>
