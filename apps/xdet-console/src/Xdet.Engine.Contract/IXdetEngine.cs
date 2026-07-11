@@ -21,4 +21,21 @@ public interface IXdetEngine
     /// edge-slab ROI carried by <paramref name="input"/>.
     /// </summary>
     MtfResult ComputeMtf(FrameData input, MtfParams parameters);
+
+    /// <summary>
+    /// Run a minimal valid golden pipeline — the <c>offset -&gt; gain</c> subsequence of
+    /// the orchestrator's <c>CANONICAL_ORDER</c> — over <paramref name="input"/> through
+    /// <c>pipeline.orchestrator.run_pipeline</c>. Composition, canonical stage order and
+    /// the CalibSet entry gate are all decided by the golden orchestrator, never here.
+    /// Returns the transported input/output frames plus engine-computed stage and
+    /// statistic info (<see cref="PipelineResult"/>). Both stages are real transforming
+    /// modules (offset subtracts the dark map; gain multiplies by the flat-field map),
+    /// so the output genuinely differs from the input.
+    /// </summary>
+    PipelineResult RunPipeline(
+        FrameData input,
+        OffsetCalibData offsetCalib,
+        OffsetParams offsetParams,
+        GainCalibData gainCalib,
+        GainParams gainParams);
 }

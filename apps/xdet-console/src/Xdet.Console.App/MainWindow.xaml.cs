@@ -62,7 +62,9 @@ public partial class MainWindow : Window
             // the golden; the UI receives the corrected frame back.
             FrameData output = await Task.Run(() => Seam!.RunOffset(input, calib, offsetParams));
 
-            RenderRow(OffsetPlot, input, output);
+            // Upgraded from a single-row line plot to full 2-D before/after heatmaps.
+            RenderHeatmap(OffsetInputPlot, input, "Offset input");
+            RenderHeatmap(OffsetOutputPlot, output, "Offset-corrected (SWR-101~104)");
 
             OffsetInfo.Text =
                 $"frame {input.Rows}x{input.Cols}  S_th={RawSaturationThreshold:F0}  " +
@@ -112,31 +114,57 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void PipelineButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryBeginWork()) return;
+        try
+        {
+            var (input, offsetCalib, gainCalib) = MakePipelineCase();
+            var offsetParams = new OffsetParams(RawSaturationThreshold);
+            var gainParams = new GainParams();
+
+            // Seam call: C# -> golden orchestrator (offset -> gain) -> C#. The
+            // orchestrator owns stage order + the CalibSet entry gate; the UI only
+            // supplies synthetic input/calibs and renders what comes back.
+            PipelineResult result = await Task.Run(() =>
+                Seam!.RunPipeline(input, offsetCalib, offsetParams, gainCalib, gainParams));
+
+            RenderHeatmap(PipelineInputPlot, result.Input, "Pipeline input");
+            RenderHeatmap(PipelineOutputPlot, result.Output, "After offset -> gain");
+
+            // All numbers are engine-computed (golden/numpy), not derived in the UI.
+            PipelineInfo.Text =
+                $"stages: {string.Join(" -> ", result.StagesRun)}  " +
+                $"out[min={result.OutputMin:F1}, max={result.OutputMax:F1}, mean={result.OutputMean:F1}]  " +
+                $"max|delta|={result.MaxAbsChangeFromInput:F1}";
+            StatusText.Text = "engine: ready (pipeline done)";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "pipeline error: " + ex.Message;
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
     // -- rendering (pure display: array selection + float->double cast only) ------
 
-    private static void RenderRow(ScottPlot.WPF.WpfPlot view, FrameData input, FrameData output)
+    /// <summary>Render a frame as a 2-D ScottPlot heatmap (row-major -> [row, col]).</summary>
+    private static void RenderHeatmap(ScottPlot.WPF.WpfPlot view, FrameData frame, string title)
     {
-        int row = input.Rows / 2;
-        var xs = new double[input.Cols];
-        var before = new double[input.Cols];
-        var after = new double[input.Cols];
-        for (int c = 0; c < input.Cols; c++)
-        {
-            int idx = row * input.Cols + c;
-            xs[c] = c;
-            before[c] = input.Pixels[idx];
-            after[c] = output.Pixels[idx];
-        }
+        var grid = new double[frame.Rows, frame.Cols];
+        for (int r = 0; r < frame.Rows; r++)
+            for (int c = 0; c < frame.Cols; c++)
+                grid[r, c] = frame.Pixels[r * frame.Cols + c];
 
         view.Plot.Clear();
-        var s1 = view.Plot.Add.Scatter(xs, before);
-        s1.LegendText = "input";
-        var s2 = view.Plot.Add.Scatter(xs, after);
-        s2.LegendText = "offset-corrected";
-        view.Plot.ShowLegend();
-        view.Plot.Title($"Offset (SWR-101~104) - row {row}");
+        var heatmap = view.Plot.Add.Heatmap(grid);
+        view.Plot.Add.ColorBar(heatmap);
+        view.Plot.Title(title);
         view.Plot.XLabel("column");
-        view.Plot.YLabel("pixel value");
+        view.Plot.YLabel("row");
         view.Refresh();
     }
 
@@ -170,6 +198,31 @@ public partial class MainWindow : Window
         return (FrameData.FromPixels(pixels, rows, cols), new OffsetCalibData(omap, rows, cols));
     }
 
+    // Synthetic INPUT + calibs for the minimal offset -> gain golden pipeline. Same
+    // frame/O_map as the offset case, plus a flat gain map inside [gain_min, gain_max]
+    // so both stages apply cleanly (no clamp / no invalid-gain flag). Not DSP — the
+    // stimulus fed across the seam.
+    private static (FrameData input, OffsetCalibData offset, GainCalibData gain)
+        MakePipelineCase(int rows = 32, int cols = 32)
+    {
+        var pixels = new float[rows * cols];
+        var omap = new float[rows * cols];
+        var gmap = new float[rows * cols];
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                int i = r * cols + c;
+                pixels[i] = 3000f + r * 3f + c * 1.5f; // above raw floor, below S_th
+                omap[i] = 200f + c * 0.5f;              // static dark map (offset)
+                gmap[i] = 1.1f;                         // flat gain in [0.5, 2.0] (gain)
+            }
+        }
+        return (FrameData.FromPixels(pixels, rows, cols),
+                new OffsetCalibData(omap, rows, cols),
+                new GainCalibData(gmap, rows, cols));
+    }
+
     // -- UI busy-state guard ------------------------------------------------------
 
     private bool TryBeginWork()
@@ -183,6 +236,7 @@ public partial class MainWindow : Window
         _busy = true;
         OffsetButton.IsEnabled = false;
         MtfButton.IsEnabled = false;
+        PipelineButton.IsEnabled = false;
         return true;
     }
 
@@ -191,5 +245,6 @@ public partial class MainWindow : Window
         _busy = false;
         OffsetButton.IsEnabled = true;
         MtfButton.IsEnabled = true;
+        PipelineButton.IsEnabled = true;
     }
 }

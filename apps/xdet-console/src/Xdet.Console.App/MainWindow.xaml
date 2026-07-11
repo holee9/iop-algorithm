@@ -14,8 +14,9 @@
 
         <TabControl>
             <!-- Offset stage (SWR-101~104): the seam runs the golden offset on a
-                 small deterministic synthetic frame; the UI only plots input vs
-                 corrected pixels for one row. No pixel math is done here. -->
+                 small deterministic synthetic frame; the UI renders the full 2-D
+                 input vs corrected frames as ScottPlot heatmaps. No pixel math is
+                 done here — only array selection and rendering. -->
             <TabItem Header="Offset">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
@@ -24,7 +25,37 @@
                         <TextBlock x:Name="OffsetInfo" Margin="12,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
-                    <sp:WpfPlot x:Name="OffsetPlot" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <sp:WpfPlot x:Name="OffsetInputPlot" Grid.Column="0" />
+                        <sp:WpfPlot x:Name="OffsetOutputPlot" Grid.Column="1" />
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+
+            <!-- Pipeline seam: the golden orchestrator runs the minimal valid
+                 offset -> gain slice of CANONICAL_ORDER on a synthetic frame with
+                 synthetic CalibSet(s). The UI renders input vs output frames as
+                 heatmaps and shows engine-computed stage/stat info. No DSP here. -->
+            <TabItem Header="Pipeline">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                        <Button x:Name="PipelineButton" Content="Run pipeline (synthetic)"
+                                Click="PipelineButton_Click" Padding="10,4" />
+                        <TextBlock x:Name="PipelineInfo" Margin="12,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <sp:WpfPlot x:Name="PipelineInputPlot" Grid.Column="0" />
+                        <sp:WpfPlot x:Name="PipelineOutputPlot" Grid.Column="1" />
+                    </Grid>
                 </DockPanel>
             </TabItem>
 

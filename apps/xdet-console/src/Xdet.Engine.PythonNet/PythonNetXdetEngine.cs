@@ -115,6 +115,44 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    public PipelineResult RunPipeline(
+        FrameData input,
+        OffsetCalibData offsetCalib, OffsetParams offsetParams,
+        GainCalibData gainCalib, GainParams gainParams)
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic xframe = Py.Import("common.xframe");
+            dynamic orchestrator = Py.Import("pipeline.orchestrator");
+
+            // C# input -> numpy -> golden XFrame. Composition + canonical order +
+            // the CalibSet entry gate are all decided inside run_pipeline.
+            PyObject pix = FloatArrayToNumpy(input.Pixels, input.Rows, input.Cols, np);
+            dynamic frame = xframe.new_frame(pix);
+
+            dynamic outFrame = RunGoldenPipeline(
+                orchestrator, np, (PyObject)frame,
+                offsetCalib, offsetParams, gainCalib, gainParams);
+
+            FrameData output = FrameFromXFrame(outFrame, np);
+            string[] stages = StagesFromHistory(outFrame);
+
+            // Engine-side (numpy over the golden output) statistics — the UI does
+            // no DSP (SPEC-VIEWER-001). max|output - input| is the golden's own
+            // proof the pipeline actually transformed the frame.
+            PyObject outPix = (PyObject)outFrame.pixel;
+            double outMin = ItemAsDouble(np.min(outPix));
+            double outMax = ItemAsDouble(np.max(outPix));
+            double outMean = ItemAsDouble(np.mean(outPix));
+            dynamic diffAbs = np.abs(np.subtract(np.asarray(outPix, np.float64), np.asarray(pix, np.float64)));
+            double maxAbsChange = ItemAsDouble(np.max(diffAbs));
+
+            return new PipelineResult(input, output, stages, outMin, outMax, outMean, maxAbsChange);
+        }
+    }
+
     // -- fidelity / reference surface (P1.5 proof only) ----------------------
 
     /// <summary>
@@ -210,6 +248,49 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    /// <summary>
+    /// The pipeline-path fidelity comparator (mirrors <see cref="VerifyOffsetAgainstPython"/>).
+    /// Reconstructs <paramref name="csOutput"/> (the frame produced by the C# seam,
+    /// <see cref="RunPipeline"/>) as a golden XFrame (output_A), independently runs the
+    /// SAME golden <c>offset -&gt; gain</c> pipeline on <paramref name="referenceInput"/>
+    /// Python-side (output_B), and compares the two with the frozen
+    /// <c>common.equivalence.diff_frames</c>.
+    /// </summary>
+    public EquivalenceResult VerifyPipelineAgainstPython(
+        FrameData csOutput, FrameData referenceInput,
+        OffsetCalibData offsetCalib, OffsetParams offsetParams,
+        GainCalibData gainCalib, GainParams gainParams)
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic xframe = Py.Import("common.xframe");
+            dynamic orchestrator = Py.Import("pipeline.orchestrator");
+            dynamic equivalence = Py.Import("common.equivalence");
+
+            // output_A: the seam's result, reconstructed as a golden XFrame.
+            PyObject pixA = FloatArrayToNumpy(csOutput.Pixels, csOutput.Rows, csOutput.Cols, np);
+            PyObject masksA = ByteArrayToNumpyU8(csOutput.Masks, csOutput.Rows, csOutput.Cols, np);
+            dynamic noiseA = xframe.NoiseModel(csOutput.NoiseAlpha, csOutput.NoiseSigma);
+            dynamic frameA = xframe.XFrame(pixA, masksA, noiseA);
+
+            // output_B: the golden pipeline run directly on the reference input.
+            PyObject pixB = FloatArrayToNumpy(referenceInput.Pixels, referenceInput.Rows, referenceInput.Cols, np);
+            dynamic frameBIn = xframe.new_frame(pixB);
+            dynamic frameB = RunGoldenPipeline(
+                orchestrator, np, (PyObject)frameBIn,
+                offsetCalib, offsetParams, gainCalib, gainParams);
+
+            dynamic diff = equivalence.diff_frames(frameA, frameB);
+            bool pixelEqual = ((PyObject)diff.pixel_equal).As<bool>();
+            bool masksEqual = ((PyObject)diff.masks_equal).As<bool>();
+            bool noiseEqual = ((PyObject)diff.noise_equal).As<bool>();
+            double maxAbs = ((PyObject)diff.max_pixel_abs_diff).As<double>();
+            return new EquivalenceResult(pixelEqual, masksEqual, noiseEqual, maxAbs);
+        }
+    }
+
     // -- golden-object builders ----------------------------------------------
 
     private static dynamic BuildOffsetCalib(OffsetCalibData calib, dynamic np)
@@ -219,6 +300,84 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         dynamic corrections = Py.Import("tests.modules.phantoms.corrections");
         PyObject omap = FloatArrayToNumpy(calib.OffsetMap, calib.Rows, calib.Cols, np);
         return corrections.offset_calib(omap);
+    }
+
+    private static dynamic BuildGainCalib(GainCalibData calib, dynamic np)
+    {
+        // Reuse the golden test helper so the GAIN CalibSet is built exactly as the
+        // Python suite builds it (single-point G_map float32, panel_id PANEL-A —
+        // matching offset_calib so the entry gate's mutual panel_id check passes).
+        dynamic corrections = Py.Import("tests.modules.phantoms.corrections");
+        PyObject gmap = FloatArrayToNumpy(calib.GainMap, calib.Rows, calib.Cols, np);
+        return corrections.gain_calib(gmap);
+    }
+
+    private static PyObject BuildGainParams(GainParams p)
+    {
+        dynamic contract = Py.Import("common.contract");
+        using var d = new PyDict();
+        using (var v = new PyFloat(p.GainMin)) d["gain_min"] = v;
+        using (var v = new PyFloat(p.GainMax)) d["gain_max"] = v;
+        dynamic paramsObj = contract.Params(d);
+        return (PyObject)paramsObj;
+    }
+
+    /// <summary>
+    /// Build the golden orchestrator objects for the minimal <c>offset -&gt; gain</c>
+    /// pipeline and run <c>pipeline.orchestrator.run_pipeline</c>. The stage subset is
+    /// a subsequence of CANONICAL_ORDER; the registry maps each stage to its module
+    /// <c>process</c> callable (matching <c>tests/pipeline/test_post_stages.py</c>); the
+    /// calib/params maps are built from the golden test helpers. run_pipeline owns the
+    /// canonical order and the CalibSet entry gate.
+    /// </summary>
+    private static dynamic RunGoldenPipeline(
+        dynamic orchestrator, dynamic np, PyObject frame,
+        OffsetCalibData offsetCalib, OffsetParams offsetParams,
+        GainCalibData gainCalib, GainParams gainParams)
+    {
+        using var stages = new PyTuple(new PyObject[] { new PyString("offset"), new PyString("gain") });
+        dynamic definition = orchestrator.PipelineDefinition(stages);
+
+        dynamic offsetMod = Py.Import("modules.offset");
+        dynamic gainMod = Py.Import("modules.gain");
+
+        using var registry = new PyDict();
+        registry["offset"] = (PyObject)offsetMod.process;   // process CALLABLE, not the module object
+        registry["gain"] = (PyObject)gainMod.process;
+
+        using var calibMap = new PyDict();
+        calibMap["offset"] = (PyObject)BuildOffsetCalib(offsetCalib, np);
+        calibMap["gain"] = (PyObject)BuildGainCalib(gainCalib, np);
+
+        using var paramsMap = new PyDict();
+        paramsMap["offset"] = BuildOffsetParams(offsetParams);
+        paramsMap["gain"] = BuildGainParams(gainParams);
+
+        return orchestrator.run_pipeline(frame, definition, registry, calibMap, paramsMap);
+    }
+
+    private static string[] StagesFromHistory(dynamic frame)
+    {
+        // Stages actually run, read from the golden append-only history chain
+        // (module_name per stage) — not inferred in C#.
+        PyObject history = (PyObject)frame.history;
+        long n = history.Length();
+        var stages = new string[n];
+        for (int i = 0; i < n; i++)
+        {
+            using PyObject entry = history[i];
+            using PyObject name = entry.GetAttr("module_name");
+            stages[i] = name.As<string>();
+        }
+        return stages;
+    }
+
+    private static double ItemAsDouble(dynamic numpyScalar)
+    {
+        // numpy scalars need .item() to narrow to a native Python float first.
+        PyObject s = (PyObject)numpyScalar;
+        using PyObject native = s.InvokeMethod("item");
+        return native.As<double>();
     }
 
     private static PyObject BuildOffsetParams(OffsetParams parameters)
