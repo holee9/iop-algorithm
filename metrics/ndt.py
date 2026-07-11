@@ -372,6 +372,14 @@ def _disk_footprint(radius: int) -> np.ndarray:
     return (yy * yy + xx * xx) <= r * r
 
 
+# @MX:WARN: [AUTO] metrics/ndt.py is 629 lines (exceeds the 500-line file-size
+# threshold) and correct_thickness carries a method-dispatch (gaussian vs
+# morphological_opening) plus two independent passthrough guard branches
+# (oversized-kernel, sub-threshold gradient).
+# @MX:REASON: the file bundles SNRn streaming, thickness correction, and IQI
+# wire-reading in one module; a change to one algorithm group risks an
+# unreviewed ripple into the others because they share this single file's
+# import/constant surface.
 def correct_thickness(
     frame: XFrame,
     params: Params,

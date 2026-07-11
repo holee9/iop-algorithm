@@ -134,6 +134,9 @@ def thin_line_masks(
     return h_line, v_line
 
 
+# @MX:TODO: [AUTO] mask_ops.combine_masks is an unimplemented T0 stub (raises
+# NotImplementedError); no consumer currently calls it in common/modules/
+# metrics/pipeline. Implement (or remove) before any caller depends on it.
 def combine_masks(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Bitwise-combine two mask stacks. Not implemented at T0."""
     raise NotImplementedError("mask_ops.combine_masks is a T0 stub")

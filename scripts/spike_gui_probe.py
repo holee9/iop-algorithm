@@ -57,6 +57,10 @@ def measure_sg3_cold_start() -> dict:
     }
 
 
+# @MX:TODO: [AUTO] No automated test exercises this function (it drives a real
+# napari viewer and is meant to be run manually per the module docstring's
+# QT_QPA_PLATFORM=offscreen invocation). Exercised only as Phase 0 spike
+# tooling, outside the P1 pipeline's CI-tracked test suite.
 def measure_sg1_and_sg2() -> dict:
     """SG-1 (float32 raw value probe) and SG-2 (contrast_limits update latency)."""
     import napari

@@ -233,6 +233,15 @@ class CompareDisplay(QWidget):
         self.probe_label.setText(f"Probe (row={reading.row}, col={reading.col}): {parts}")
 
 
+# @MX:WARN: [AUTO] apps/gui/app.py is 772 lines, the largest file in the
+# scanned source set, and ModuleVerifierTab coordinates a background
+# CallableWorker (QThread) run against a mutable cancel flag plus a
+# stale-result guard (compare/export only valid for the run that produced
+# them).
+# @MX:REASON: the run/cancel/compare state machine spans multiple Qt signal
+# callbacks; a race between a late `succeeded`/`failed` signal and a new run
+# started after Cancel could apply a stale result if the guard is ever
+# weakened.
 class ModuleVerifierTab(QWidget):
     """Phase 1: load a frame -> pick one module -> run -> compare + history (REQ-VIEW-RUN-1)."""
 

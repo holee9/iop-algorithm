@@ -253,6 +253,12 @@ class XFrame:
         )
 
 
+# @MX:ANCHOR: [AUTO] Public constructor for XFrame, the sole ingestion path from
+# raw pixel arrays (common.io.load_raw_frame, common.synth_calibset test/GUI
+# fixtures, scripts.ingest_edrogi) into the pipeline's canonical container.
+# @MX:REASON: fan_in spans every external XFrame-construction call site (raw
+# loader, synthetic fixtures, ingest tooling); a signature change here breaks
+# every non-orchestrator entry into the pipeline.
 def new_frame(
     pixel: np.ndarray,
     masks: np.ndarray | None = None,

@@ -24,6 +24,13 @@ from typing import Any, Mapping
 import numpy as np
 
 
+# @MX:ANCHOR: [AUTO] CalibKind is the closed category enum every calibrated
+# module and metrics builder tags its CalibSet with (offset/gain/defect/lag/
+# line_noise/noise/scatter/other).
+# @MX:REASON: fan_in spans the orchestrator's stage->CalibKind entry gate
+# (calib_kind_for_stage) and every CalibSet producer/consumer pair (e.g.
+# metrics.noise_model <-> modules.denoise); an unrecognized or renamed member
+# silently breaks the cross-domain gate wiring (SWR-000-5).
 class CalibKind(str, Enum):
     """Category of calibration payload."""
 

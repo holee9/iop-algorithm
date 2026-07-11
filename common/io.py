@@ -26,6 +26,12 @@ from common.xframe import XFrame, new_frame
 _DEFAULT_DTYPE = "uint16"
 
 
+# @MX:ANCHOR: [AUTO] Sole external-filesystem ingestion point that converts a
+# headerless 16-bit raw + JSON sidecar into the pipeline's XFrame container.
+# @MX:REASON: this is the only place a raw acquisition file crosses into the
+# XDET data model; the lossless uint16->float32 upcast and the resolution/
+# element-count cross-check are the invariants every GUI/script raw-input path
+# depends on (REQ-VIEW-CORE-1).
 def load_raw_frame(
     raw_path: str | Path, meta_path: str | Path | None = None
 ) -> XFrame:

@@ -115,6 +115,46 @@ def test_scenario3_dqe_is_dose_invariant():
     assert abs(dqe_2x - 1.0) < TOLERANCES["dqe_ideal_abs"], dqe_2x
 
 
+def _inverted_form_midband(params, pitch_mm, shape=(512, 512), n_frames=24, seed=0):
+    """Mid-band value of the dimensionally-inverted protocol §1.4 form.
+
+    Computes the OLD inverted expression (q*Ka in the numerator, un-normalized
+    NPS in the denominator) test-locally -- NOT via the module -- to pin that it
+    is the wrong answer. REQ-DQEDOC-TEST-2: the inverted form is computed inside
+    the test only, never through metrics.dqe.
+    """
+    q = params.get("dqe_q")
+    ka = params.get("dqe_ka")
+    fluence = q * ka
+    frames = _ideal_quantum_frames(fluence, pitch_mm, shape, n_frames, seed)
+    nps_res = nps.compute_nps(frames, params)
+    freqs = nps_res.get("frequencies_lpmm")
+    raw_nps = nps_res.get("nps")  # inverted form uses un-normalized NPS in denom
+    mtf_ideal = np.ones_like(freqs)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inverted = mtf_ideal * mtf_ideal * q * ka / raw_nps
+    nyq = 1.0 / (2.0 * pitch_mm)
+    band = (freqs > 0.2 * nyq) & (freqs < 0.8 * nyq)
+    return float(np.mean(inverted[band]))
+
+
+def test_scenario3_inverted_form_negative_control():
+    """Negative control (REQ-DQEDOC-TEST-2): the inverted protocol §1.4 form is
+    NOT dimensionless (~1) for an ideal detector, so it cannot be the true DQE.
+
+    Side-by-side with the module (IEC form ~1) this pins that the IEC form is
+    load-bearing and the §1.4 correction is real. The inverted expression is
+    computed test-locally, never through metrics.dqe.
+    """
+    params = make_params()
+    pitch = params.get("pixel_pitch_mm")
+    iec_mid = _ideal_dqe_midband(params, pitch, seed=0)
+    inverted_mid = _inverted_form_midband(params, pitch, seed=0)
+    # IEC form is dimensionless (~1); the inverted form is orders of magnitude off.
+    assert abs(iec_mid - 1.0) < TOLERANCES["dqe_ideal_abs"], iec_mid
+    assert abs(inverted_mid - 1.0) > 2.0, inverted_mid
+
+
 def test_scenario4_three_dose_levels():
     """Per-dose NPS/DQE each produced with dose metadata (Scenario 4)."""
     params = make_params()

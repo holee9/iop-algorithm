@@ -500,6 +500,13 @@ def ingest(
     )
 
 
+# @MX:WARN: [AUTO] scripts/ingest_edrogi.py is 539 lines (exceeds the 500-line
+# threshold) and layers filename/dose parsing, the no-copy guard, manifest
+# ingest, and fixture emission in one module.
+# @MX:REASON: emit_source_fixtures is where those upstream stages converge to
+# write the 3 committed CalibSet-source fixtures (INGEST-5/D6); an unreviewed
+# change anywhere upstream in this file can silently change what gets
+# committed here.
 def emit_source_fixtures(root: str | Path, fixture_dir: str | Path = FIXTURE_DIR) -> tuple[Path, ...]:
     """Emit the 3 committed 256^2 CalibSet-source ROI crops (INGEST-5 / D6)."""
     root = Path(root)
