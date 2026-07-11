@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
-from common.calibset import CalibKind, CalibSet
+from common.calibset import CalibDomain, CalibKind, CalibSet
 from common.contract import Params
 from common.xframe import XFrame
 
@@ -181,6 +181,7 @@ def _calibration_gate(
     stages: tuple[str, ...],
     panel_id: str | None = None,
     timestamp: str | None = None,
+    domain: CalibDomain | None = None,
 ) -> None:
     """Refuse processing on missing/mismatched calibration (ORCH-4, EC-1/EC-2).
 
@@ -189,9 +190,15 @@ def _calibration_gate(
     All wired CalibSets must additionally agree on panel_id with each other.
 
     @MX:NOTE: [AUTO] No default substitution — an unmet requirement raises
-    CalibrationError naming the offending stage/field (SWR-000-5).
+    CalibrationError naming the offending stage/field (SWR-000-5). The additive
+    descriptor layer (SPEC-CALDOM-001) rejects cross-domain misapplication (the
+    given `domain` context vs a specified CalibSet domain) and cross-stage domain
+    / beam_quality inconsistency; an UNSPECIFIED domain, a None beam_quality, or a
+    None `domain` context skips its check (no regression on the five checks above).
     """
     seen_panel: tuple[str, str] | None = None  # (stage, panel_id)
+    seen_domain: tuple[str, CalibDomain] | None = None  # (stage, domain)
+    seen_beam: tuple[str, str] | None = None  # (stage, beam_quality)
     for stage in stages:
         calib = calib_map.get(stage)
         if calib is None:
@@ -230,6 +237,38 @@ def _calibration_gate(
                 f"window [{calib.valid_from}, {calib.valid_until}]"
             )
 
+        # --- descriptor checks (SPEC-CALDOM-001), layered on top of the five
+        # checks above. Each check is skipped when its descriptor is unspecified
+        # or its context is None, so existing pipelines are unaffected (GATE-5).
+        if (
+            domain is not None
+            and calib.domain != CalibDomain.UNSPECIFIED
+            and calib.domain != domain
+        ):
+            # Cross-context firewall: e.g. a medical RQA5 gain map fed to an NDT
+            # pipeline (GATE-2).
+            raise CalibrationError(
+                f"stage '{stage}': CalibSet domain '{calib.domain.value}' "
+                f"!= expected pipeline domain '{domain.value}'"
+            )
+        if calib.domain != CalibDomain.UNSPECIFIED:
+            # Cross-stage mutual domain consistency (seen_panel precedent, GATE-3).
+            if seen_domain is not None and calib.domain != seen_domain[1]:
+                raise CalibrationError(
+                    f"stage '{stage}': CalibSet domain '{calib.domain.value}' "
+                    f"!= domain '{seen_domain[1].value}' of stage '{seen_domain[0]}'"
+                )
+            seen_domain = (stage, calib.domain)
+        if calib.beam_quality is not None:
+            # Cross-stage mutual beam_quality consistency: blocks mixing e.g. an
+            # RQA5 map and an E2597 map in one run (GATE-4).
+            if seen_beam is not None and calib.beam_quality != seen_beam[1]:
+                raise CalibrationError(
+                    f"stage '{stage}': CalibSet beam_quality '{calib.beam_quality}' "
+                    f"!= beam_quality '{seen_beam[1]}' of stage '{seen_beam[0]}'"
+                )
+            seen_beam = (stage, calib.beam_quality)
+
 
 def run_pipeline(
     frame: XFrame,
@@ -240,6 +279,7 @@ def run_pipeline(
     *,
     panel_id: str | None = None,
     timestamp: str | None = None,
+    domain: CalibDomain | None = None,
 ) -> XFrame:
     """Execute the pipeline in fixed canonical order (ORCH-1/3/4).
 
@@ -258,9 +298,16 @@ def run_pipeline(
     """
     params_map = params_map or {}
 
-    # Entry gate before any processing (ORCH-4).
+    # Entry gate before any processing (ORCH-4). `domain` is the pipeline's
+    # expected imaging-domain context, isomorphic to panel_id/timestamp
+    # (SPEC-CALDOM-001); None skips the cross-domain check.
     _calibration_gate(
-        frame, calib_map, definition.stages, panel_id=panel_id, timestamp=timestamp
+        frame,
+        calib_map,
+        definition.stages,
+        panel_id=panel_id,
+        timestamp=timestamp,
+        domain=domain,
     )
 
     current = frame

@@ -2,7 +2,8 @@
 
 @MX:ANCHOR: [AUTO] CalibSet is the single calibration container shared by every
 processing stage (SWR-000-10). Its schema (panel id, resolution, validity
-period, kind, data, provenance) is the one contract all modules read against.
+period, kind, data, provenance, and the applicability descriptors domain /
+beam_quality) is the one contract all modules read against.
 @MX:REASON: fan_in spans all calibrated modules (offset/gain/defect/...); a
 schema change affects every consumer and the entry gate.
 
@@ -44,6 +45,28 @@ class CalibKind(str, Enum):
     # grid, which has no detector calibration and uses CalibSet(OTHER).
     SCATTER = "scatter"
     OTHER = "other"
+
+
+# @MX:NOTE: [AUTO] CalibDomain is the applicability-domain descriptor read by the
+# orchestrator entry gate as the cross-domain misapplication firewall
+# (SPEC-CALDOM-001, measurement protocol §5). A CLOSED str-enum (CalibKind
+# precedent) because the imaging domain is enumerable; distinct from the free-form
+# `beam_quality` string, which is not (energies/beam qualities are open-ended,
+# measurement protocol §1b.2). Orthogonal to CalibKind: it says WHERE a
+# calibration applies, not WHAT category of payload it carries.
+class CalibDomain(str, Enum):
+    """Applicability domain of a CalibSet (measurement protocol §5).
+
+    Two-layer beam-quality rationale (measurement protocol §1/§1b, EV-101/EV-301):
+    metrology metrics (DQE/MTF/NPS) are measured at a fixed RQA5 to stay
+    domain-independent (EV-101), while application offset/gain and energy response
+    are domain-specific (EV-301). This pipeline is the application layer, so the
+    domain descriptor is the primary basis for the cross-domain gate firewall.
+    """
+
+    MEDICAL = "medical"  # measurement protocol §1 (IEC-class)
+    NDT = "ndt"  # measurement protocol §1b (ASTM E2597)
+    UNSPECIFIED = "unspecified"  # default: domain-agnostic (no gate assertion)
 
 
 # CalibSet(kind=LAG) data payload keys: the exponential-sum IRF coefficients
@@ -106,7 +129,15 @@ class CalibSet:
         valid_from / valid_until: ISO-8601 validity window.
         kind:       CalibKind category.
         data:       named ndarray payloads.
-        provenance: generation history.
+        provenance: generation history (when/who created it).
+        domain:     applicability domain (CalibDomain: medical / ndt /
+                    unspecified; default unspecified). An APPLICABILITY descriptor
+                    (like panel_id/resolution), separate from provenance; it is the
+                    orchestrator entry gate's primary cross-domain input.
+        beam_quality: beam-quality descriptor (free string, e.g. "RQA5" (metrology
+                    reference, domain-independent) / "E2597"-class (NDT
+                    application); default None). Free-form because energies/beam
+                    qualities are not enumerable (measurement protocol §1b.2).
     """
 
     panel_id: str
@@ -116,6 +147,12 @@ class CalibSet:
     kind: CalibKind
     data: Mapping[str, np.ndarray] = field(default_factory=dict)
     provenance: CalibProvenance | None = None
+    # Applicability descriptors (SPEC-CALDOM-001). Placed AFTER the existing
+    # default-valued fields so dataclass field order stays valid, and defaulted so
+    # every pre-descriptor call site and every legacy serialized payload remains
+    # valid unchanged (backward-compat).
+    domain: CalibDomain = CalibDomain.UNSPECIFIED
+    beam_quality: str | None = None
 
     def __post_init__(self) -> None:
         # Immutability: modules must not mutate calibration payloads in place
@@ -157,6 +194,13 @@ class CalibSet:
         for name, arr in self.data.items():
             if not isinstance(arr, np.ndarray):
                 raise CalibSchemaError(f"data[{name!r}] must be a numpy ndarray")
+        # Applicability-descriptor checks (SPEC-CALDOM-001), additive to the above.
+        if not isinstance(self.domain, CalibDomain):
+            raise CalibSchemaError("domain must be a CalibDomain member")
+        if self.beam_quality is not None and (
+            not isinstance(self.beam_quality, str) or not self.beam_quality
+        ):
+            raise CalibSchemaError("beam_quality must be None or a non-empty string")
 
     def matches_resolution(self, resolution: tuple[int, int]) -> bool:
         """True when the CalibSet applies to the given frame resolution."""
@@ -191,6 +235,11 @@ class CalibSet:
                 if self.provenance
                 else None
             ),
+            # Applicability descriptors added as NEW json meta keys only
+            # (SPEC-CALDOM-001 COMPAT). The npz payload and every existing key
+            # above are unchanged; legacy readers ignore unknown keys.
+            "domain": self.domain.value,
+            "beam_quality": self.beam_quality,
         }
         json_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         return npz_path, json_path
@@ -212,6 +261,11 @@ class CalibSet:
             if prov
             else None
         )
+        # Applicability descriptors restored via meta.get so a legacy sidecar
+        # (no descriptor keys) loads with the defaults (SPEC-CALDOM-001 COMPAT-1).
+        # An unrecognized domain string fails LOUDLY here (CalibDomain(...) raises
+        # ValueError) — never silently defaulted (SWR-000-5, acceptance D3).
+        domain = CalibDomain(meta.get("domain", CalibDomain.UNSPECIFIED.value))
         calib = cls(
             panel_id=meta["panel_id"],
             resolution=tuple(meta["resolution"]),
@@ -220,6 +274,8 @@ class CalibSet:
             kind=CalibKind(meta["kind"]),
             data=data,
             provenance=provenance,
+            domain=domain,
+            beam_quality=meta.get("beam_quality"),
         )
         calib.validate()
         return calib
