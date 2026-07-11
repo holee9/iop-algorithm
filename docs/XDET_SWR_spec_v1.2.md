@@ -152,6 +152,14 @@
 |---|---|---|
 | [B] SWR-103/202/301/401/501/601/603/701/1101 | 패널 실측 파라미터 | 1·2단계 취득 세트 |
 | [T] SWR-104/203/302/503/705/801/802/901/1002/1003/1203 | 튜닝 파라미터 | P1 개발 중 GDS 기반 확정 |
+| [T] SWR-803(β)·SWR-1002(고조파 최대 차수·grid 방향 판정 마진)·SWR-1004(감쇠 계수 상한)·SWR-1101(SKS 반복 횟수 2~3)·SWR-1102(저신호 감쇠 임계·감쇠 곡선) | 등재요청 튜닝 파라미터 (POST-001/GRID-001/VGRID-001) | P1 개발 중 GDS 기반 확정 |
+| [T] 신규(SWR-ID 미부여): line_max_width | LINE 분류 얇음 조건(직교 폭 임계, 기본값 1) — CORR-001, `common/mask_ops.py` | P1 개발 중 확정 |
+| [T] 신규(SWR-ID 미부여, 최종 [T]/[P] 등급 미확정): ε_unbias·λ_floor | VST 왕복 무편향 판정 임계·정규화 하한(상대 편향 기준) — DENOISE-001(가정 default [T]) | DENOISE-001 확인사항 7 — 최종 [T]/[P] 등급·λ_floor 기본값 크기 미확정 |
+| [P] 신규(SWR-ID 미부여): nps_central_frac·line_noise_sig_factor·lag_plateau_frac·lag_settle_frac | T1 지표 엔진 판정 파라미터 — METRICS-001 | P1 개발 중 확정 |
+| 등급 미정(SPEC 서술 참조): SWR-502(오염 배제 계수 6·MAD)·SWR-602(경계 밴드 폭 2px) | LNSG-001 — SWR 본문 명시 상수이나 부록 A 종전 미등재 | LNSG-001 확인사항 6 — [T]/[P] 중 미정 |
+| 등급 미정(SPEC 서술 참조): SWR-1002(탐색 대역 하한 0.3)·SWR-1004(moiré 저주파 컷오프 0.5/mm) | GRID-001 — SWR 본문 명시 상수, 무등급 등재 요청 | GRID-001 파라미터 등급 확정 절 |
+| 등급 미정(SPEC 서술 참조): SWR-1102(grid ratio 환산 계수 w)·SWR-1101/1102(다운샘플 배율 ×8) | VGRID-001 — w는 사용자 선택 [T]/[P] 미정, 배율은 방법([L]) 대비 수치 자체 무등급 | VGRID-001 파라미터 등급 확정 절 |
+| 등급 미정(SPEC 서술 참조): SWR-804(γ_DRC·B_mid)·SWR-805(p0.1/p99.9 백분위)·ε_gsdf(SWR-903 관련)·IQA 대리 임계 | POST-001 — SWR 본문 명시값이나 부록 A/A-2 종전 미등재(ε_gsdf는 "[S]-인접" 언급뿐 확정 아님) | POST-001 확인사항/Environment 절 |
 
 ## 부록 A-2. 근거 등급 총괄
 
@@ -160,9 +168,11 @@
 | [S] 표준 일치 | 301(noisy 6×, 9×9, bad neighborhood, lag 판정), 1201(SNRn 88.6µm), 1202(20% dip), GSDF(PS3.14), 측정 조건 전반 |
 | [L] 문헌 근거 | 401(N=3~4, 다중노출 캘리브레이션), 702·703(GAT/exact unbiased), 704(BM3D 원저 파라미터), 801(Laplacian 우위 — Dippel TMI 2002), 802(power law 변조 — Vuylsteke 1994 공개), 901(3단계 구조), 1001(grid 30~85 lines/cm aliasing), 1101(SKS) |
 | [C] 관행 | 000 계열(파이프라인 순서), 503, 803, 1203 스케일 개념 |
-| [P] 제안값 | 301 일부 임계(dead/over-under/non-uniform), 203(gain 범위), 302(cluster 상한), 705(k_s), 1002(D_th), 1003(notch 폭), 1302(±1 LSB), 프리셋 수치 전반 — 전부 TBD 레지스터 관리 |
+| [P] 제안값 | 301 일부 임계(dead/over-under/non-uniform), 203(gain 범위), 302(cluster 상한), 705(k_s), 1002(D_th), 1003(notch 폭), 1302(±1 LSB), 프리셋 수치 전반 — 전부 TBD 레지스터 관리; nps_central_frac·line_noise_sig_factor·lag_plateau_frac·lag_settle_frac(METRICS-001, SWR-ID 미부여) |
+| 등급 미정(SPEC 서술 참조) | SWR-502·SWR-602(LNSG-001); SWR-1002 탐색 대역 하한(0.3)·SWR-1004 moiré 저주파 컷오프(0.5/mm)(GRID-001); SWR-1102 grid ratio 환산 계수 w·SWR-1101/1102 다운샘플 배율(×8)(VGRID-001); SWR-804(γ_DRC·B_mid)·SWR-805 백분위(p0.1/p99.9)·ε_gsdf·IQA 대리 임계(POST-001) — 각 SPEC 확인사항/Environment 절에 수치는 명시되었으나 [S]/[L]/[C]/[P] 등급은 미확정 |
 
 ## 부록 B. 개정·게이트
 
 - ⚠P 절(8, 11, 5 일부): 특허 대조는 릴리스 게이트로 이연 — 대안 설계 예비 정의 완료 상태 유지.
 - 본 사양의 acceptance는 상위 FR→PR의 EV 참조 상속 (RTM v1.2에서 SWR 열 추가).
+- 동기화 (2026-07-11, issue #46): CORR-001·METRICS-001·LNSG-001·GRID-001·POST-001·DENOISE-001·VGRID-001의 "SWR 부록 A 등재 요청" 24건을 부록 A/A-2에 반영(README.md 공백 해소). 값·등급은 각 SPEC 원문(HISTORY·Environment·결정 필요/확인 사항 절)에서 그대로 전사했으며, 원문이 [T]/[P] 등급을 확정하지 않은 항목은 "등급 미정(SPEC 서술 참조)"으로 표기했다.
