@@ -8,7 +8,8 @@
     <DockPanel>
         <StatusBar DockPanel.Dock="Bottom">
             <StatusBarItem>
-                <TextBlock x:Name="StatusText" Text="engine: not initialized" />
+                <TextBlock x:Name="StatusText" AutomationProperties.AutomationId="StatusText"
+                           Text="engine: not initialized" />
             </StatusBarItem>
         </StatusBar>
 
@@ -17,12 +18,14 @@
                  small deterministic synthetic frame; the UI renders the full 2-D
                  input vs corrected frames as ScottPlot heatmaps. No pixel math is
                  done here — only array selection and rendering. -->
-            <TabItem Header="Offset">
+            <TabItem Header="Offset" AutomationProperties.AutomationId="OffsetTab">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
-                        <Button x:Name="OffsetButton" Content="Run offset (synthetic)"
+                        <Button x:Name="OffsetButton" AutomationProperties.AutomationId="OffsetButton"
+                                Content="Run offset (synthetic)"
                                 Click="OffsetButton_Click" Padding="10,4" />
-                        <TextBlock x:Name="OffsetInfo" Margin="12,0,0,0"
+                        <TextBlock x:Name="OffsetInfo" AutomationProperties.AutomationId="OffsetInfo"
+                                   Margin="12,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
                     <Grid>
@@ -40,12 +43,14 @@
                  offset -> gain slice of CANONICAL_ORDER on a synthetic frame with
                  synthetic CalibSet(s). The UI renders input vs output frames as
                  heatmaps and shows engine-computed stage/stat info. No DSP here. -->
-            <TabItem Header="Pipeline">
+            <TabItem Header="Pipeline" AutomationProperties.AutomationId="PipelineTab">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
-                        <Button x:Name="PipelineButton" Content="Run pipeline (synthetic)"
+                        <Button x:Name="PipelineButton" AutomationProperties.AutomationId="PipelineButton"
+                                Content="Run pipeline (synthetic)"
                                 Click="PipelineButton_Click" Padding="10,4" />
-                        <TextBlock x:Name="PipelineInfo" Margin="12,0,0,0"
+                        <TextBlock x:Name="PipelineInfo" AutomationProperties.AutomationId="PipelineInfo"
+                                   Margin="12,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
                     <Grid>
@@ -62,12 +67,14 @@
             <!-- MTF metric (measurement protocol 1.2): the adapter renders the golden
                  slanted-edge phantom, the seam computes the presampled MTF, and the UI
                  plots the returned frequency vs MTF curve verbatim. -->
-            <TabItem Header="MTF">
+            <TabItem Header="MTF" AutomationProperties.AutomationId="MtfTab">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
-                        <Button x:Name="MtfButton" Content="Compute MTF"
+                        <Button x:Name="MtfButton" AutomationProperties.AutomationId="MtfButton"
+                                Content="Compute MTF"
                                 Click="MtfButton_Click" Padding="10,4" />
-                        <TextBlock x:Name="MtfInfo" Margin="12,0,0,0"
+                        <TextBlock x:Name="MtfInfo" AutomationProperties.AutomationId="MtfInfo"
+                                   Margin="12,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
                     <sp:WpfPlot x:Name="MtfPlot" />
