@@ -1,7 +1,7 @@
 ---
 id: SPEC-DQEDOC-001
-version: 0.1.0
-status: draft
+version: 0.2.0
+status: completed
 created: 2026-07-11
 updated: 2026-07-11
 author: drake.lee
@@ -21,6 +21,7 @@ XDET 영상처리 SW P1의 **문서 교정 SPEC**. `metrics/dqe.py`는 이미 IE
 ## HISTORY
 
 - **v0.1.0 (2026-07-11)** — 초안 생성. GitHub 이슈 #38. 5개 요구 그룹(DOC/TAG/TEST/TRACE/CONTRACT) EARS 구조 확정. 4개 산출물(문서 교정 · @MX 태그 정합 · 차원 정합 회귀 테스트 · 추적성 동기화)을 시험케이스 **XDET-TC-070~073**에 대응. 저작 시 검증·확정 사항: (a) 역전 공식은 `docs/XDET_measurement_protocol_v1.0.md` §1.4(라인 40)에만 존재 — `docs/XDET_SWR_spec_v1.2.md` SWR-000-10(라인 17)은 DQE를 서술적으로만 언급(공식 미기재)하므로 SWR 공식 편집 불필요, TRACE는 docs/ 전체에서 역전 공식 0건만 검증. (b) 차원 정합/선량 불변 회귀는 `tests/metrics/test_nps_dqe.py::test_scenario3_dqe_ideal_detector_is_unity`·`test_scenario3_dqe_is_dose_invariant`로 **이미 존재** — 본 SPEC은 그 커버리지를 보존하고 역전 형태 음성 대조(test-local)를 추가하는 방향으로 한정. (c) 문서 in-file 버전은 이미 v1.1(issue #34), 파일명 유지 규칙은 문서 자체 HISTORY에 명시됨 → v1.2로 승격. status: draft (run 단계 착수 전까지 유지).
+- **v0.2.0 (2026-07-11)** — run 완료. 4개 지정 타깃 정정 반영: 측정프로토콜 §1.4 IEC 무차원 형태 정정 + in-file v1.2, `metrics/dqe.py` obsolete `@MX:WARN` 제거(산출로직·ANCHOR 불변), 역전형태 test-local 음성대조 회귀 추가, RTM §1.4 정정 HISTORY 노트(행·버전 불변). 검증: `uv run pytest tests/metrics/` 107 passed · `uv run lint-imports` 7 kept 0 broken · docs/ 역전형태 grep 0건. 독립 검토(evaluator-active) ACCEPT/결함 0. 커밋 `eae084b`(Refs #38). status: draft → completed.
 
 ## Environment / Assumptions
 
