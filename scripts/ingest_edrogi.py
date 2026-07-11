@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from common.calibset import CalibKind, CalibProvenance, CalibSet
+from common.calibset import CalibDomain, CalibKind, CalibProvenance, CalibSet
 from common.io import load_raw_frame
 from modules.defect import K_CLASS_MAP
 from modules.gain import K_GAIN_MAP
@@ -65,6 +65,13 @@ SAMPLE_PANEL_ID = "SAMPLE-EDROGI-16BIT"
 SAMPLE_VALID_FROM = "2000-01-01"
 SAMPLE_VALID_UNTIL = "2099-12-31"
 SAMPLE_PROVENANCE_NOTE = "sample=true; plumbing-only; non-authoritative (SPEC-REALDATA-001)"
+# Sample acquisition domain (SPEC-CALDOM-001 SAMPLE): the acrylic(PMMA)/nps/ghost/
+# min-dose-linear setup is medical/IEC-class (measurement protocol §1,
+# `_CATEGORY_BY_FOLDER`). This is a CATEGORICAL label, not a number — it is
+# QUARANTINE-safe (REQ-REALDATA-VALIDATE-4 guards numbers, not labels) and does
+# NOT promote the sample set to authoritative (panel_id + provenance sample=true
+# still enforce non-authority). beam_quality stays None: no validated RQA5 basis.
+SAMPLE_DOMAIN = CalibDomain.MEDICAL
 
 # The representative single GAIN level consumed as a single-point G_map (D1);
 # multi-level linearity fitting is blocked by QUARANTINE (guiding set only).
@@ -280,6 +287,7 @@ def build_offset_calibset(masterdark) -> CalibSet:
         kind=CalibKind.OFFSET,
         data={K_OFFSET_MAP: o_map},
         provenance=_sample_provenance(),
+        domain=SAMPLE_DOMAIN,
     )
     calib.validate()
     return calib
@@ -304,6 +312,7 @@ def build_gain_calibset(calset) -> CalibSet:
         kind=CalibKind.GAIN,
         data={K_GAIN_MAP: g_map},
         provenance=_sample_provenance(),
+        domain=SAMPLE_DOMAIN,
     )
     calib.validate()
     return calib
@@ -328,6 +337,7 @@ def build_defect_calibset(bpm) -> CalibSet:
         kind=CalibKind.DEFECT,
         data={K_CLASS_MAP: class_map},
         provenance=_sample_provenance(),
+        domain=SAMPLE_DOMAIN,
     )
     calib.validate()
     return calib

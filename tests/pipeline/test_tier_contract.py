@@ -49,6 +49,10 @@ def test_no_tier_calibkind_or_kind_wiring():
 
 
 def test_run_pipeline_signature_unchanged():
+    # `domain` is the SPEC-CALDOM-001 additive context arg: keyword-only with a
+    # default of None (isomorphic to panel_id/timestamp), so every existing caller
+    # is unaffected. The guard is updated to acknowledge the authorized additive
+    # surface — the positional core (frame/definition/registry/calib_map) is fixed.
     params = list(inspect.signature(run_pipeline).parameters)
     assert params == [
         "frame",
@@ -58,6 +62,7 @@ def test_run_pipeline_signature_unchanged():
         "params_map",
         "panel_id",
         "timestamp",
+        "domain",
     ]
 
 
