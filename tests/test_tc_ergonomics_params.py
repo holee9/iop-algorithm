@@ -103,6 +103,31 @@ def test_tc_051_manifest_keys_derive_from_module_constants():
     # Pure-passthrough / all-optional modules expose an empty tuple.
     assert lag.REQUIRED_PARAMS == ()
     assert saturation.REQUIRED_PARAMS == ()
+    # line_noise / grid / window: complete the derive-from-constants invariant
+    # to all 12 modules (these three previously carried only the tuple-of-str
+    # check, not an explicit value-match against their own P_* constants).
+    assert set(line_noise.REQUIRED_PARAMS) == {
+        line_noise.P_WINDOW,
+        line_noise.P_CUTOFF,
+        line_noise.P_CONTAM_K,
+    }
+    assert set(grid.REQUIRED_PARAMS) == {
+        grid.P_PITCH,
+        grid.P_SEARCH_LO,
+        grid.P_DTH_DB,
+        grid.P_DIR_MARGIN_DB,
+        grid.P_HARMONIC_MAX,
+        grid.P_NOTCH_FWHM_MULT,
+        grid.P_MOIRE_CUTOFF,
+        grid.P_MOIRE_ATTEN_CAP,
+    }
+    assert set(window.REQUIRED_PARAMS) == {
+        window.P_LUM_MIN,
+        window.P_LUM_MAX,
+        window.P_PVALUE_MAX,
+        window.P_COLLIM_REL,
+        window.P_DIRECT_FENCE,
+    }
 
 
 def test_tc_051_mse_selector_covers_both_methods():
