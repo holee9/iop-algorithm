@@ -8,13 +8,6 @@ NNPS carries [mm^2], leaving DQE(f) dimensionless. Both q and Ka are injected vi
 Params (REQ-METRICS-CORE-4). A divide-by-zero guard marks frequencies where
 NNPS -> 0 as invalid (REQ-METRICS-NPS-7 / EC-3).
 
-@MX:WARN: [AUTO] measurement protocol v1.0 §1.4 states
-"DQE = MTF^2 * q * Ka / NPS", which is dimensionally inverted and conflicts with
-IEC 62220-1; the IEC form (MTF^2 / (q*Ka*NNPS)) is implemented here.
-@MX:REASON: the protocol §1.4 expression is not dimensionless and grows without
-bound with dose, so it cannot be the true DQE; flagged for document correction
-(issue #2).
-
 @MX:ANCHOR: [AUTO] `compute_dqe` is the DQE public entry point (acceptance
 Scenario 3/4).
 @MX:REASON: DQE composition is the terminal Common-Core physics metric; its
