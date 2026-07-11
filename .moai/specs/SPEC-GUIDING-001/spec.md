@@ -1,17 +1,18 @@
 ---
 id: SPEC-GUIDING-001
-version: 0.1.0
+version: 0.1.1
 status: draft
 created: 2026-07-11
 updated: 2026-07-11
 author: drake.lee
 priority: high
 issue_number: 33
+labels: [guiding, acquisition-requirements, quarantine-extension, dqe, lag, coverage]
 ---
 
 # SPEC-GUIDING-001 — 정본 지침(guiding) 취득세트 요구사항 (P1 수치 golden 검증 blocker 해제)
 
-XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPEC-REALDATA-001(#29) 플러밍 검증에서 `images/에드로지16BIT/` **샘플** 세트를 엔진에 통과시킨 결과, 코드 경로는 실측 형상(3072²)에서 정상 구동하나 **P1 수치 골든 검증(EV 기준)은 이 샘플로 사실상 검증 불가**함이 문서 대조로 확정되었다(전 측정 항목 MISSING/PARTIAL, DQE 3입력 온전 공급 0개). 본 SPEC은 정본 "지침(guiding)" 취득세트가 **무엇을 어떤 조건으로** 취득해야 P1 DoD(EV-101~106/201~205/301~303, XDET-TC-001~019 수치 판정)를 unblock하는지 딥리서치 근거(이슈 #33) 기반으로 EARS로 명세한다. **본 SPEC은 소프트웨어 구현이 아니다** — 코드·파이프라인 스테이지·CalibKind·`process()` 시그니처를 추가하지 않으며, 취득해야 할 물리 데이터의 요구·조건·매수·추적성만 정의한다.
+XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPEC-REALDATA-001(#29) 플러밍 검증에서 `images/에드로지16BIT/` **샘플** 세트를 엔진에 통과시킨 결과, 코드 경로는 실측 형상(3072²)에서 정상 구동하나 **P1 수치 골든 검증(EV 기준)은 이 샘플로 사실상 검증 불가**함이 문서 대조로 확정되었다(전 측정 항목 MISSING/PARTIAL, DQE 3입력 온전 공급 0개). 본 SPEC은 정본 "지침(guiding)" 취득세트가 **무엇을 어떤 조건으로** 취득해야 P1 DoD(EV-101~106/201~205/301~303, XDET-TC-001~019 중 취득 대상 항목 — 합성 VST 시험 TC-011·GSDF LUT SW 자가검사 TC-014 제외, 근거는 Exclusions·「결정 필요/확인 사항」 후술)를 unblock하는지 딥리서치 근거(이슈 #33) 기반으로 EARS로 명세한다. **본 SPEC은 소프트웨어 구현이 아니다** — 코드·파이프라인 스테이지·CalibKind·`process()` 시그니처를 추가하지 않으며, 취득해야 할 물리 데이터의 요구·조건·매수·추적성만 정의한다.
 
 - 근거: GitHub 이슈 #33(딥리서치 원본: 목적·커버리지 갭 매트릭스·DQE 3입력 특수성·기준 셋업) · [OBSERVE] GHOST #32(lag 인터리브/포화 구조 제약) · `docs/XDET_measurement_protocol_v1.0.md`(선질·MTF·NPS·DQE 측정 사양) · `docs/XDET_image_acquisition_sets_v1.1.md`(취득세트 정의) · `docs/XDET_measurement_item_list_v1.0.md`(측정 항목) · `docs/XDET_EVAL_criteria_v1.1.md`(EV min/typ/max) · `docs/XDET_TestSpec_v1.0.md`(XDET-TC 정의) · `docs/XDET_RTM_v1.1.md`(요구·추적)
 - 완료 정의(DoD): (1) A티어 기준 셋업(RQA5 + 교정 Ka + XN) 요구가 확정·문서화되고, (2) 최고 레버리지 2종(flat 선량 계단 · 슬랜티드 엣지)이 취득되면 MTF·NPS·DQE·gain·선형성·노이즈모델 수치 아암이 활성화되며, (3) MISSING/PARTIAL 항목이 순차 취득으로 EV-101~106/201~205/301~303 판정 가능화되고, (4) 정본 세트가 SPEC-REALDATA-001 매니페스트 규약(`usage="guiding"`)으로 등록되며, (5) 각 취득이 어떤 TC/EV를 unblock하는지 RTM 경유로 추적된다. 수치 확정·튜닝은 정본 세트 도착 후 **별도 SPEC** 소관.
@@ -20,6 +21,7 @@ XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPE
 
 ## HISTORY
 
+- **v0.1.1 (2026-07-11)** — plan-auditor REJECT 정정(D1–D7). `docs/XDET_TestSpec_v1.0.md`·`docs/XDET_RTM_v1.1.md` 대조로 이슈 #33 커버리지 갭 매트릭스의 TC/EV 오표기를 교정(#33 매트릭스를 그대로 복사하지 않고 정본 문서로 검증). **(D2)** XDET-TC-010의 EV 귀속을 EV-205 → **EV-201·EV-102**(RTM MR-004/PR-CORE-004, TestSpec)로 정정하고, 그동안 인용되지 않던 **EV-201**(TC-010)·**EV-204**(TC-012 관찰자·IQA 회귀, RTM MR-001)을 실제 인용하여 "EV-201~205" 범위 주장과 실제 인용 EV id를 일치시킴. **(D5·최중요)** **XDET-TC-011은 합성 Poisson-Gaussian VST 왕복 무편향성 시험**(denoiser 우회, 편차 임계 내 — 취득 비대상)이므로 α,σ 취득 주장(LEVERAGE 헤더·LEVERAGE-1·COVERAGE-4·매니페스트)에서 제거하고, 다점 선량계단 α,σ 요구는 **SWR-701 노이즈모델 특성화**로 정정 귀속. **(D3)** **XDET-TC-014**(GSDF LUT 적합성 SW 자가검사, PS3.14)를 취득 범위에서 명시 제외(Exclusions 신설 항목). **(D4)** LEVERAGE 헤더·본문 TC 범위 정합(TC-011 제거로 해소). **(D1)** `labels` 프론트매터 추가(SPEC-REALDATA-001 규약 정합). **(D6)** grid "≥5매"→"5매"(이슈 #33 원문 일치). **(D7)** REQ-GUIDING-DQE-3 (State-Driven)→**(Ubiquitous)** 재태그(Ka에 IEC 표값이 없다는 항구적 도메인 사실, WHILE 제거). EARS 요구 수 불변(총 36). 「결정 필요/확인 사항」 4 신설(이슈 #33 매트릭스의 TC-011 오표기를 TestSpec 소유자와 확정 권고). status: draft 유지.
 - **v0.1.0 (2026-07-11)** — 초안 생성. GitHub 이슈 #33(딥리서치). 6개 요구 그룹(BASELINE/LEVERAGE/DQE/LAG/COVERAGE/TRACE) EARS 구조 확정, 총 36개 EARS 요구. 저작 시 확정 사항: (a) 본 SPEC은 **T-스테이지가 아니며 소프트웨어 산출물이 없다** — 물리 취득 요구·조건·매수·추적성만 정의하고, 취득세트가 어떤 XDET-TC/EV를 unblock하는지 매핑한다. (b) SPEC-REALDATA-001 QUARANTINE(샘플 세트 수치 작업 영구 제외)을 **연장** — 본 SPEC이 정의하는 정본 지침 세트만이 수치 작업의 근거가 될 수 있다. (c) TC/EV 매핑은 이슈 #33 커버리지 갭 매트릭스를 그대로 형식화하며 TestSpec/EVAL/RTM을 이름으로 교차참조한다. (d) lag 취득 구조 제약은 [OBSERVE] #32(노출/잔상 인터리브 + 포화)를 그대로 반영. status: draft (수치 확정 작업 착수 전까지 유지).
 
 ## Environment / Assumptions
@@ -55,9 +57,9 @@ XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPE
 - **REQ-GUIDING-BASELINE-6 (Unwanted)** — IF 부가필터로 초고순도 Al(예: 순도 99.999%)를 사용하면, THEN 이를 거부해야 한다 — 저주파 mottle을 유발하므로 type-1100 순도 99.0%를 요구한다.
 - **REQ-GUIDING-BASELINE-7 (Unwanted)** — IF 명목 kV 값만으로 빔질을 확정(HVL 실측 생략)하려 하면, THEN 이를 거부해야 한다 — 빔질 확정은 HVL 실측을 요구한다(REQ-GUIDING-BASELINE-2).
 
-### REQ-GUIDING-LEVERAGE — 최고 레버리지 2종 (먼저 취득 시 다수 아암 동시 활성화) (SWR-202/701, EV-101/102, XDET-TC-001/002/011)
+### REQ-GUIDING-LEVERAGE — 최고 레버리지 2종 (먼저 취득 시 다수 아암 동시 활성화) (SWR-202/701, EV-101/102, XDET-TC-001/002)
 
-- **REQ-GUIDING-LEVERAGE-1 (Event-Driven)** — WHEN gain 다점·NPS·DQE 분모·선형성·노이즈모델 수치 아암을 동시 활성화하려면, THEN 지침 세트는 **flat-field 선량 계단**(1/8·1/4·1/2·1·2·4·8× 중 **6~8단계, 단계당 ≥10매 + 각 단계 선량 실측치**)을 공급해야 한다(SWR-202 gain K≥3 · SWR-701 노이즈모델 · EV-101 · XDET-TC-001/011).
+- **REQ-GUIDING-LEVERAGE-1 (Event-Driven)** — WHEN gain 다점·NPS·DQE 분모·선형성·노이즈모델 수치 아암을 동시 활성화하려면, THEN 지침 세트는 **flat-field 선량 계단**(1/8·1/4·1/2·1·2·4·8× 중 **6~8단계, 단계당 ≥10매 + 각 단계 선량 실측치**)을 공급해야 한다(SWR-202 gain K≥3 · SWR-701 노이즈모델 특성화 · EV-101 · XDET-TC-001; α,σ 특성화는 SWR-701 귀속이며 합성 시험 TC-011과 무관).
 - **REQ-GUIDING-LEVERAGE-2 (Event-Driven)** — WHEN MTF·SRb·DQE 분자 수치 아암을 활성화하려면, THEN 지침 세트는 **슬랜티드 엣지**(W 2mm 또는 납/스틸/구리 후판, 검출기 밀착, **수평·수직, 1.5~3° 미세경사**, 방향·선량당 ≥5매)를 공급해야 한다(측정프로토콜 §MTF · EV-102 · XDET-TC-002).
 - **REQ-GUIDING-LEVERAGE-3 (Unwanted)** — IF 엣지 취득이 45° 배치 또는 알루미늄 엣지로 구성되면, THEN 이를 거부해야 한다 — 측정프로토콜 §MTF는 1.5~3° 미세경사 + 고감쇠 엣지를 요구한다.
 - **REQ-GUIDING-LEVERAGE-4 (Unwanted)** — IF flat 선량 계단이 각 단계 **선량 실측치 없이** 라벨(정격)만으로 구성되면, THEN 이를 거부해야 한다 — gain 선형성·DQE 분모·노이즈모델 회귀에 실측 선량이 필수이다(샘플 acrylic_step DN/선량 축 불정합 반복 금지).
@@ -66,7 +68,7 @@ XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPE
 
 - **REQ-GUIDING-DQE-1 (Event-Driven)** — WHEN DQE(f)를 산출하려면, THEN 지침 세트는 세 입력을 **모두** 공급해야 한다: MTF(f)(슬랜티드 엣지, REQ-GUIDING-LEVERAGE-2), NPS(f)(flat ≥16매 앙상블 × 3 선량점, REQ-GUIDING-LEVERAGE-1 기반), **교정 Ka**(검출기면 실측, REQ-GUIDING-BASELINE-3) — DQE = MTF²/(q·Ka·NNPS)(IEC 62220-1, SPEC-DQEDOC-001 정정 형태).
 - **REQ-GUIDING-DQE-2 (Ubiquitous)** — NPS 입력은 선량점당 **≥16매 flat 앙상블**이어야 한다 — 3매는 FFT 앙상블 부족으로 저주파 NPS 편향을 유발한다.
-- **REQ-GUIDING-DQE-3 (State-Driven)** — WHILE q는 IEC 표값으로 조달 가능하지만 Ka는 표값이 없는 동안, Ka는 **교정 이온챔버 실측**으로만 공급되어야 한다 — 절대 선량 미확정 시 DQE 절대값 산출이 불가하다.
+- **REQ-GUIDING-DQE-3 (Ubiquitous)** — q는 IEC 표값으로 조달 가능하나 **Ka는 IEC 표값이 존재하지 않으므로**, Ka는 **교정 이온챔버 실측**으로만 공급되어야 한다 — 절대 선량 미확정 시 DQE 절대값 산출이 불가하다.
 - **REQ-GUIDING-DQE-4 (Unwanted)** — IF DQE 3입력 중 하나라도(MTF 분자 · ≥16매 NPS · 교정 Ka) 결여되면, THEN DQE 수치 판정을 활성화된 것으로 간주해서는 안 된다 — 현 샘플 상태는 온전 공급 0개이다.
 
 ### REQ-GUIDING-LAG — lag/ghost 취득 구조 제약 (SWR-401~404, [OBSERVE] #32, EV-104, XDET-TC-004/005)
@@ -82,18 +84,18 @@ XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPE
 - **REQ-GUIDING-COVERAGE-1 (Event-Driven)** — WHEN offset 보정 입력(EV-101)을 활성화하려면, THEN dark 프레임을 **온도 3구간 × 시점 4회 × 시점당 ≥20매**로 취득해야 한다.
 - **REQ-GUIDING-COVERAGE-2 (Event-Driven)** — WHEN 결함 화소 E2597 7종 분류 검증(EV-103, XDET-TC-003)을 활성화하려면, THEN **dark ≥50매 + flat ≥50매 raw 스택**을 공급해야 한다(dead/over-under/non-uniform 등 7종 분류).
 - **REQ-GUIDING-COVERAGE-3 (Event-Driven)** — WHEN 라인노이즈 검출·보정(EV-105, XDET-TC-006)을 활성화하려면, THEN **전용 저선량 세트**(XN/8~XN/4, **≥20매**)를 공급해야 한다.
-- **REQ-GUIDING-COVERAGE-4 (Event-Driven)** — WHEN 분산-평균 다점 회귀로 노이즈모델(α,σ)을 확정(SWR-701, XDET-TC-011)하려면, THEN 다점 선량계단(REQ-GUIDING-LEVERAGE-1의 flat 선량 계단)을 공급해야 한다 — 단일 저선량점으로는 회귀가 불가하다.
+- **REQ-GUIDING-COVERAGE-4 (Event-Driven)** — WHEN 분산-평균 다점 회귀로 노이즈모델(α,σ)을 확정(**SWR-701 노이즈모델 특성화**)하려면, THEN 다점 선량계단(REQ-GUIDING-LEVERAGE-1의 flat 선량 계단)을 공급해야 한다 — 단일 저선량점으로는 회귀가 불가하다. 이 α,σ 특성화는 DQE 분모(NNPS)·denoise 노이즈 게이팅의 입력이며, **합성 VST 왕복 시험 XDET-TC-011과는 무관**하다(TestSpec은 TC-011을 합성 Poisson-Gaussian 세트 전용으로 예약 — 「결정 필요/확인 사항」 4).
 - **REQ-GUIDING-COVERAGE-5 (Event-Driven)** — WHEN NDT SNRn·SRb(20% dip)·IQI 판정(EV-301, XDET-TC-018)을 활성화하려면, THEN **duplex wire + 단선 IQI + 용접시편**을 **kV·노출 3점 × 5매 + 적산용 연속 프레임**으로 공급해야 한다.
 - **REQ-GUIDING-COVERAGE-6 (Event-Driven)** — WHEN 대조도-두께 지표(CSa/SMTR)(EV-303, XDET-TC-019)를 활성화하려면, THEN **E2597 6단 step wedge(강/알루미늄) + 두께 경사 시편**을 공급해야 한다.
-- **REQ-GUIDING-COVERAGE-7 (Event-Driven)** — WHEN grid 억제 검증(EV-203, XDET-TC-015/016)을 활성화하려면, THEN grid 장착 취득을 **밀도 3부류(f_grid < 3.57 / ≈ / > lp/mm, aliased 필수)**로, 정렬·미세경사, **grid당 ≥5매** 공급해야 한다.
+- **REQ-GUIDING-COVERAGE-7 (Event-Driven)** — WHEN grid 억제 검증(EV-203, XDET-TC-015/016)을 활성화하려면, THEN grid 장착 취득을 **밀도 3부류(f_grid < 3.57 / ≈ / > lp/mm, aliased 필수)**로, 정렬·미세경사, **grid당 5매** 공급해야 한다(이슈 #33 원문 수치).
 - **REQ-GUIDING-COVERAGE-8 (Event-Driven)** — WHEN scatter/virtual grid 검증(EV-202, XDET-TC-017)을 활성화하려면, THEN **아크릴/물 두께 계단**을 **grid 유/무 쌍**으로 공급해야 한다.
 - **REQ-GUIDING-COVERAGE-9 (Event-Driven)** — WHEN 구조물 오보정(EV-105, XDET-TC-007)·포화 경계(EV-106, XDET-TC-008)·기하 잔차(EV-106, XDET-TC-009)를 활성화하려면, THEN **금속 막대·판 3배치 × 5매**(구조물), **경계 구도 3 × 5매**(포화), **격자 팬텀 3위치 × 3매 + 실측 치수**(기하)를 공급해야 한다.
-- **REQ-GUIDING-COVERAGE-10 (Event-Driven)** — WHEN 자동윈도우·IQA·CDRAD 판정(EV-205, XDET-TC-010/012/013)을 활성화하려면, THEN **부위별 다구도(≥10) 임상 모사 + CDRAD**를 **표준 + 저선량 계단**으로 공급해야 한다.
+- **REQ-GUIDING-COVERAGE-10 (Event-Driven)** — WHEN SNR 개선·SRb 열화(**EV-201·EV-102, XDET-TC-010**) · 대비강화/DRC IQA 회귀(**EV-204, XDET-TC-012**) · 자동윈도우 수용률(**EV-205, XDET-TC-013**) 판정을 활성화하려면, THEN **부위별 다구도(≥10) 임상 모사 + CDRAD**를 **표준 + 저선량 계단**으로 공급해야 한다 — RTM 기준 매핑은 TC-010→EV-201·EV-102, TC-012→EV-204, TC-013→EV-205이다(이슈 #33 매트릭스의 "EV-205 일괄" 표기를 RTM/TestSpec로 정정).
 - **REQ-GUIDING-COVERAGE-11 (Unwanted)** — IF 어떤 항목이라도 요구 매수·조건 미달(예: NPS < 16매, flat 계단 < 10매/단계, offset dark < 20매/시점, grid 밀도 3부류 미충족, aliased 부류 누락)로 공급되면, THEN 해당 항목의 수치 아암을 활성화된 것으로 간주해서는 안 된다.
 
 ### REQ-GUIDING-TRACE — 추적성 · 격리 · 등록 (RTM, SPEC-REALDATA-001 매니페스트 규약)
 
-- **REQ-GUIDING-TRACE-1 (Ubiquitous)** — 각 취득 요구는 그것이 unblock하는 TC/EV(XDET-TC-001~019, EV-101~106/201~205/301~303)에 **RTM 경유로 매핑**되어야 한다.
+- **REQ-GUIDING-TRACE-1 (Ubiquitous)** — 각 취득 요구는 그것이 unblock하는 TC/EV(XDET-TC-001~019 중 취득 대상 항목 — TC-011·TC-014 제외, EV-101~106/201~205/301~303)에 **RTM 경유로 매핑**되어야 한다.
 - **REQ-GUIDING-TRACE-2 (Ubiquitous)** — 정본 지침 세트는 SPEC-REALDATA-001 매니페스트 규약에 따라 **`usage="guiding"`**로 등록되어야 하며, 샘플 세트(`usage="sample-plumbing"`)와 구분되어야 한다.
 - **REQ-GUIDING-TRACE-3 (State-Driven)** — WHILE 정본 지침 세트가 도착하기 전인 동안, 골든 모델 수치 검증은 **합성 팬텀 경로로만 유효**하며(수치 골든 BLOCKER 유지), 샘플 세트 기반 실측 아암은 sanity 전용이어야 한다(SPEC-REALDATA-001 QUARANTINE).
 - **REQ-GUIDING-TRACE-4 (Event-Driven)** — WHEN 정본 지침 세트가 도착·등록되면, THEN 그것이 unblock하는 각 TC/EV 수치 판정의 BLOCKER 해제 조건이 충족된 것으로 기록되어야 한다 — 수치 확정·튜닝은 별도 SPEC 소관이다.
@@ -106,13 +108,15 @@ XDET 영상처리 SW P1의 **취득 요구(acquisition-requirements) SPEC**. SPE
 - **수치 확정·튜닝 없음(본 SPEC 범위 밖)** — 정본 지침 세트로 실제 MTF/NPS/DQE/IRF/α,σ 수치를 확정하거나 파라미터를 튜닝하는 작업은 세트 도착 후 **별도 SPEC**에서만 수행한다. 본 SPEC은 "무엇을 어떤 조건으로 취득해야 하는가"만 정의한다.
 - **날조 데이터 없음** — 취득세트는 실제 물리 취득으로만 공급되어야 하며, 합성/날조 프레임을 정본 지침 세트로 등록하지 않는다(합성 팬텀은 세트 도착 전 검증 경로일 뿐 정본이 아니다).
 - **EV 판정 임계 변경 없음** — EVAL v1.1 EV min/typ/max 판정 수치를 건드리지 않는다. 본 SPEC은 그 판정을 **가능화**할 취득 요구를 정의할 뿐 임계 자체를 정의·조정하지 않는다(측정=판정 분리).
+- **취득 비대상 TC/EV 명시 제외 (TestSpec/RTM 근거)** — 다음은 **물리 취득으로 unblock되는 항목이 아니므로** 본 SPEC의 취득 요구 범위에서 제외한다: **(1) XDET-TC-011** — 합성 Poisson-Gaussian VST 왕복 무편향성 시험(denoiser 우회, 편차 임계 내). `docs/XDET_TestSpec_v1.0.md`가 합성 세트 전용으로 예약하며 이미 합성 검증 가능(SPEC-DENOISE-001 소관)이다. 이슈 #33 매트릭스가 α,σ 취득을 TC-011로 오표기한 것을 정정(D5). **(2) XDET-TC-014** — GSDF LUT 적합성 자가검사(PS3.14, 대상=LUT 산출물). 취득이 아닌 소프트웨어 자가검사이다. **(3) EV-302(ADR Recall/False call)** — DL/Gen 2 항목으로 P1 취득 범위 밖(EV-301~303 범위 중 EV-302는 미대상; CLAUDE.md "Gen 2 항목은 구현하지 않는다").
 - **벤더 `_result` 사용 없음** — 정본 세트도 벤더 후처리 `_result` 프레임을 골든/티어 diff 기준으로 사용하지 않는다(다른 알고리즘·스케일, SPEC-REALDATA-001 REQ-REALDATA-CONTRACT-3).
 - **물리 취득 실행 자체는 본 SPEC의 코드 작업이 아님** — 실제 촬영·선량 측정·시편 제작은 실험/하드웨어 활동이다. 본 SPEC은 그 활동의 요구·조건·매수·검증 체크리스트를 명세한다.
 
 ## 결정 필요/확인 사항
 
-저작 시 대부분 확정되었으며, 실측[B] 대기 항목이 아니므로 후속 작업을 차단하지 않는다.
+저작 시 대부분 확정되었으며, 실측[B] 대기 항목이 아니므로 후속 작업을 차단하지 않는다. (항목 4는 plan-audit REJECT 정정(v0.1.1)에서 추가된 TestSpec 대조 확인 사항.)
 
 1. **[확정 — RESOLVED]** 무-코드 범위 — 본 SPEC은 취득 요구/조건/매수/추적성 명세이며 소프트웨어 산출물이 없다. 검증은 도착한 후보 지침 세트를 매니페스트 체크리스트에 대조하는 관측(SUPPLIED/MISSING)으로 수행한다. **rationale**: 이슈 #33의 목적은 "무엇을 어떤 조건으로 취득해야 unblock되는가"의 근거 기반 명세이며, 수치 작업은 명시적으로 별도 SPEC 소관이다.
 2. **[확인 필요]** 매니페스트 완결성 검사 방식 — 정본 세트 도착 시 각 요구의 매수·조건 충족을 검증하는 방법. **가정 기본값**: 문서화된 매니페스트 체크리스트(acceptance.md)에 대한 **수동/문서 대조**(무-코드, 이슈 #33 무-코드 제약 준수). **확인 대상**: 향후 `usage="guiding"` 엔트리의 매수·조건만 대조하는 **비수치 구조 완결성 체커**(카운트·조건만, 파라미터 유도·수치 피팅 없음 — QUARANTINE 안전)를 별도 툴링 SPEC으로 추가할지 사용자 선호. 기본은 **무-코드 문서 체크리스트**.
 3. **[확인 필요]** 우선순위 취득 순서 — 이슈 #33의 A→B→C→D 우선순위(A티어 전제 → 최고 레버리지 2종 → B/C/D 확장)를 그대로 채택. **확인 대상**: 실험 자원 제약에 따라 B/C/D 내 항목 순서를 조정할지(레버리지 2종·A티어는 고정). 기본은 이슈 #33 순서.
+4. **[확인 필요]** 이슈 #33 매트릭스의 TC-011 오표기 — 이슈 #33 커버리지 갭 매트릭스는 노이즈모델 α,σ 취득을 "TC-011 / SWR-701"로 묶었으나, `docs/XDET_TestSpec_v1.0.md`는 **XDET-TC-011을 합성 Poisson-Gaussian VST 왕복 무편향성 시험**(denoiser 우회, 편차 임계 내)으로 예약한다 — 물리 취득 항목이 아니다. 본 SPEC(v0.1.1)은 α,σ 다점 취득을 **SWR-701 노이즈모델 특성화**로 정정 귀속하고 TC-011을 취득 주장에서 제거했다(D5). **확인 대상**: α,σ 다점 취득에 대응하는 정확한 TC id(신규 TC 부여 필요 여부 포함)를 TestSpec 소유자와 확정. **가정 기본값**: α,σ 취득은 SWR-701 특성화로 귀속(별도 TC 미부여), XDET-TC-011은 합성 VST 시험 전용으로 유지.

@@ -1,13 +1,14 @@
 ---
 id: SPEC-GUIDING-001
 title: 정본 지침(guiding) 취득세트 요구사항 — P1 수치 golden 검증 blocker 해제
-version: 0.1.0
+version: 0.1.1
 status: draft
 created: 2026-07-11
 updated: 2026-07-11
 author: drake.lee
 priority: high
 issue_number: 33
+labels: [guiding, acquisition-requirements, quarantine-extension, dqe, lag, coverage]
 ---
 
 # SPEC-GUIDING-001 취득 계획 (초안) — 정본 지침 취득세트
@@ -16,7 +17,7 @@ issue_number: 33
 
 ## 1. 개요
 
-SPEC-REALDATA-001 플러밍 검증 결과, 샘플 세트(`images/에드로지16BIT/`)로는 P1 수치 골든 검증(EV 기준)이 사실상 불가함이 확정되었다(전 항목 MISSING/PARTIAL, DQE 3입력 온전 공급 0개). 본 SPEC은 정본 "지침(guiding)" 취득세트가 **무엇을 어떤 조건으로** 취득해야 P1 DoD(EV-101~106/201~205/301~303, XDET-TC-001~019 수치 판정)를 unblock하는지 EARS로 명세한다. **본 SPEC은 소프트웨어 구현이 아니다** — 코드·모듈·파이프라인 스테이지·CalibKind·`process()` 시그니처를 추가하지 않으며, 물리 취득의 요구·조건·매수·추적성만 정의한다. 수치 확정·튜닝은 세트 도착 후 **별도 SPEC** 소관.
+SPEC-REALDATA-001 플러밍 검증 결과, 샘플 세트(`images/에드로지16BIT/`)로는 P1 수치 골든 검증(EV 기준)이 사실상 불가함이 확정되었다(전 항목 MISSING/PARTIAL, DQE 3입력 온전 공급 0개). 본 SPEC은 정본 "지침(guiding)" 취득세트가 **무엇을 어떤 조건으로** 취득해야 P1 DoD(EV-101~106/201~205/301~303, XDET-TC-001~019 중 취득 대상 항목 — 합성 VST 시험 TC-011·GSDF LUT SW 자가검사 TC-014 제외)를 unblock하는지 EARS로 명세한다. **본 SPEC은 소프트웨어 구현이 아니다** — 코드·모듈·파이프라인 스테이지·CalibKind·`process()` 시그니처를 추가하지 않으며, 물리 취득의 요구·조건·매수·추적성만 정의한다. 수치 확정·튜닝은 세트 도착 후 **별도 SPEC** 소관.
 
 ## 2. 취득 우선순위 계획 (A→B→C→D, 시간 추정 없음)
 
@@ -25,7 +26,7 @@ SPEC-REALDATA-001 플러밍 검증 결과, 샘플 세트(`images/에드로지16B
 | 우선순위 | 취득 | unblock (TC/EV) | 대응 REQ |
 |---|---|---|---|
 | **A (전제)** | RQA5 확립(Al 21mm type-1100, HVL 실측 kV, SID≥1.5m) + 교정 이온챔버 Ka 실측 + XN 3점 선량 + offset/gain 전·후 | 전 항목의 전제 | BASELINE-1~7 |
-| **A (레버리지 1)** | flat-field 선량 계단 6~8단계 × 단계당 ≥10매 + 단계별 선량 실측치 | XDET-TC-001/011, EV-101 (gain 다점 · NPS · DQE 분모 · 선형성 · 노이즈모델 α,σ) | LEVERAGE-1/4, DQE-2, COVERAGE-4 |
+| **A (레버리지 1)** | flat-field 선량 계단 6~8단계 × 단계당 ≥10매 + 단계별 선량 실측치 | XDET-TC-001, EV-101 (gain 다점 · NPS · DQE 분모 · 선형성 · SWR-701 α,σ 특성화) | LEVERAGE-1/4, DQE-2, COVERAGE-4 |
 | **A (레버리지 2)** | 슬랜티드 엣지 W 2mm 후판, 수평·수직, 1.5~3° 미세경사, 방향·선량당 ≥5매 | XDET-TC-002, EV-102 (MTF · SRb · DQE 분자) | LEVERAGE-2/3, DQE-1 |
 | **B** | 비포화 다중노출 lag step-response(2~90% 범위, 프레임 간격 기록, ≥5회, 노출/잔상 쌍) | XDET-TC-004, EV-104 | LAG-1/2/3/5 |
 | **B** | ghost 시간계단(납판 반차폐 강노출 → 균일 조사 직후/1분/5분) | XDET-TC-005, EV-104 | LAG-4 |
@@ -33,15 +34,15 @@ SPEC-REALDATA-001 플러밍 검증 결과, 샘플 세트(`images/에드로지16B
 | **B** | 전용 저선량 line noise 세트(XN/8~XN/4, ≥20매) | XDET-TC-006, EV-105 | COVERAGE-3 |
 | **C** | duplex wire + 단선 IQI + 용접시편(kV·노출 3점×5매 + 적산 연속 프레임) | XDET-TC-018, EV-301 | COVERAGE-5 |
 | **C** | E2597 6단 step wedge(강/알루미늄) + 두께 경사 시편 | XDET-TC-019, EV-303 | COVERAGE-6 |
-| **C** | grid 매트릭스(밀도 3부류 aliased 포함, grid당 ≥5매) | XDET-TC-015/016, EV-203 | COVERAGE-7 |
+| **C** | grid 매트릭스(밀도 3부류 aliased 포함, grid당 5매) | XDET-TC-015/016, EV-203 | COVERAGE-7 |
 | **C** | scatter 팬텀(아크릴/물 두께 계단, grid 유/무 쌍) | XDET-TC-017, EV-202 | COVERAGE-8 |
 | **C** | 구조물/포화구도/기하 팬텀(금속 3배치×5 / 경계 3×5 / 격자 3위치×3 + 실측 치수) | XDET-TC-007/008/009, EV-105/106 | COVERAGE-9 |
-| **D** | 임상 모사 + CDRAD(부위별 다구도 ≥10, 표준 + 저선량 계단) | XDET-TC-010/012/013, EV-205 | COVERAGE-10 |
+| **D** | 임상 모사 + CDRAD(부위별 다구도 ≥10, 표준 + 저선량 계단) | TC-010→EV-201·EV-102 / TC-012→EV-204 / TC-013→EV-205 (RTM) | COVERAGE-10 |
 
 ## 3. 등록·추적성 (산출물)
 
 - **매니페스트 등록**: 정본 세트는 SPEC-REALDATA-001 매니페스트 규약에 따라 전 엔트리 `usage="guiding"`로 등록되어 샘플 세트(`usage="sample-plumbing"`)와 구분된다(TRACE-2).
-- **RTM 매핑**: 각 취득 요구가 unblock하는 TC/EV(XDET-TC-001~019, EV-101~106/201~205/301~303)를 RTM 경유로 매핑한다(TRACE-1).
+- **RTM 매핑**: 각 취득 요구가 unblock하는 TC/EV(XDET-TC-001~019 중 취득 대상 항목 — TC-011·TC-014 제외, EV-101~106/201~205/301~303)를 RTM 경유로 매핑한다(TRACE-1).
 - **BLOCKER 상태**: 세트 도착 전까지 수치 검증은 합성 팬텀 경로로만 유효(수치 골든 BLOCKER 유지); 도착·등록 시 unblock 조건 충족 기록(TRACE-3/4). 수치 확정·튜닝은 별도 SPEC(TRACE-5).
 
 ## 4. 리스크 분석 (요약)
