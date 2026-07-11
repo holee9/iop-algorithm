@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- P1.5 seam implementation: embeds the uv .venv CPython via pythonnet and
+       calls the FROZEN Python golden (common/modules/metrics). Reuses the proven
+       interop config from apps/xdet-console/interop-probe. No DSP is reimplemented
+       here - the golden is the single source of numeric truth. -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="pythonnet" Version="3.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Xdet.Engine.Contract\Xdet.Engine.Contract.csproj" />
+  </ItemGroup>
+
+</Project>
