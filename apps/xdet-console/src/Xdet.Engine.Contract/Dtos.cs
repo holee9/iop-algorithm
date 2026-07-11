@@ -111,3 +111,41 @@ public sealed record PipelineResult(
     double OutputMax,
     double OutputMean,
     double MaxAbsChangeFromInput);
+
+/// <summary>
+/// Result of the QUARANTINE plumbing/sanity run of the golden OFFSET stage on a REAL
+/// edrogi acquisition frame (SPEC-REALDATA-001). [HARD] NON-AUTHORITATIVE: this is a
+/// "does the pipeline EXECUTE on a real 3072x3072 frame and yield finite, non-degenerate
+/// output" check ONLY — never a numeric golden. No tolerance is fitted and neither the
+/// output nor any preview is a numeric reference. Every value here is computed ENGINE-side
+/// (numpy over the golden output) and the previews are downsampled ENGINE-side; the UI
+/// performs no DSP and no downsampling (SPEC-VIEWER-001).
+///
+/// <see cref="BeforePreview"/> / <see cref="AfterPreview"/> are engine-downsampled
+/// (~512x512 block-mean) heatmap previews in the same transport form as any other frame
+/// (float32 buffer + shape); dtype is implicitly float32. When the sample tree is absent
+/// (<see cref="ImagesPresent"/> == false) the previews are null and the numeric fields are
+/// zero — the engine returns cleanly rather than throwing.
+/// </summary>
+public sealed record RealImageSanityResult(
+    bool ImagesPresent,
+    bool Sane,
+    string Status,
+    string SignalName,
+    int Rows,
+    int Cols,
+    string Dtype,
+    bool Finite,
+    double Std,
+    double Min,
+    double Max,
+    double Mean,
+    FrameData? BeforePreview,
+    FrameData? AfterPreview)
+{
+    /// <summary>The sample acquisition tree is absent — a clean, non-throwing verdict.</summary>
+    public static RealImageSanityResult Absent(string edrogiRoot)
+        => new(false, false,
+               "QUARANTINE 배관/sanity (수치 golden 아님): real images absent — " + edrogiRoot,
+               "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, null, null);
+}

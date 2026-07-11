@@ -10,14 +10,21 @@ namespace Xdet.UiSmoke;
 /// SPEC-XSEAM-001 P1.5 end-to-end GUI smoke driver. Launches the REAL WPF app and
 /// exercises every tab's button through the Windows UI Automation tree (FlaUI/UIA3):
 /// wait for the embedded-Python engine to reach "ready", then for each tab
-/// select -> click -> assert the tab's info TextBlock updates to a non-error value.
-/// Exit code 0 iff Offset, MTF and Pipeline all PASS. Requires an interactive desktop.
+/// select -> click -> assert the tab's info TextBlock updates to a non-error value,
+/// and CAPTURE a PNG screenshot of the window AFTER each action completes. Exit code 0
+/// iff Offset, MTF, Pipeline and Real Image all PASS. Requires an interactive desktop.
+///
+/// The Real Image tab runs the QUARANTINE plumbing/sanity offset on a REAL edrogi
+/// 3072x3072 frame (SPEC-REALDATA-001) — it loads a ~18M-pixel raw, so it gets a
+/// generous per-action budget. Screenshots (offset/mtf/pipeline/realimage + a ready
+/// overview) are written to apps/xdet-console/_screens/ (a build artifact, gitignored).
 /// </summary>
 internal static class Program
 {
     // Poll cadence + budgets (see "FlaUI timing decisions" in the handoff report).
     private const int EngineReadyTimeoutSec = 60;   // embedded CPython bootstrap
     private const int ActionTimeoutSec = 30;        // one seam call round-trip
+    private const int RealImageTimeoutSec = 120;    // loads a real 3072² raw + offset
     private const int PollMs = 250;
     private const int TabRealizeMs = 400;           // let WPF realize the tab content
 
@@ -58,17 +65,30 @@ internal static class Program
                 return 2;
             }
             Console.WriteLine("engine ready — status: \"" + ReadText(window, cf, "StatusText") + "\"");
+
+            // Screenshot sink (absolute, gitignored build artifact). Capture a
+            // full-window overview on the ready screen before driving any tab.
+            string screensDir = ScreensDir();
+            Directory.CreateDirectory(screensDir);
+            Console.WriteLine("screens dir: " + screensDir);
+            CaptureWindow(window, Path.Combine(screensDir, "overview.png"));
             Console.WriteLine();
 
-            // 2) Drive each tab's button and assert its info TextBlock updates. Lookup
-            //    is by AutomationId (order-independent; the XAML tab order is
-            //    Offset, Pipeline, MTF but we key on ids, not position).
-            bool offset = RunTab(window, cf, "OFFSET", "OffsetTab", "OffsetButton", "OffsetInfo", "offset error");
-            bool mtf = RunTab(window, cf, "MTF", "MtfTab", "MtfButton", "MtfInfo", "MTF error");
-            bool pipeline = RunTab(window, cf, "PIPELINE", "PipelineTab", "PipelineButton", "PipelineInfo", "pipeline error");
+            // 2) Drive each tab's button, assert its info TextBlock updates, and capture
+            //    a screenshot AFTER the action completes. Lookup is by AutomationId
+            //    (order-independent; we key on ids, not XAML tab position). The Real
+            //    Image tab loads a real 3072² raw so it gets the generous budget.
+            bool offset = RunTab(window, cf, "OFFSET", "OffsetTab", "OffsetButton", "OffsetInfo",
+                "offset error", ActionTimeoutSec, Path.Combine(screensDir, "offset.png"));
+            bool mtf = RunTab(window, cf, "MTF", "MtfTab", "MtfButton", "MtfInfo",
+                "MTF error", ActionTimeoutSec, Path.Combine(screensDir, "mtf.png"));
+            bool pipeline = RunTab(window, cf, "PIPELINE", "PipelineTab", "PipelineButton", "PipelineInfo",
+                "pipeline error", ActionTimeoutSec, Path.Combine(screensDir, "pipeline.png"));
+            bool realImage = RunTab(window, cf, "REALIMAGE", "RealImageTab", "RealImageButton", "RealImageInfo",
+                "real image error", RealImageTimeoutSec, Path.Combine(screensDir, "realimage.png"));
 
             Console.WriteLine();
-            bool all = offset && mtf && pipeline;
+            bool all = offset && mtf && pipeline && realImage;
             Console.WriteLine("=== RESULT: " + (all ? "ALL PASS" : "FAIL") + " ===");
             return all ? 0 : 1;
         }
@@ -109,7 +129,8 @@ internal static class Program
 
     private static bool RunTab(
         Window window, ConditionFactory cf,
-        string label, string tabId, string buttonId, string infoId, string errorToken)
+        string label, string tabId, string buttonId, string infoId, string errorToken,
+        int timeoutSec, string screenshotPath)
     {
         try
         {
@@ -133,7 +154,7 @@ internal static class Program
             button.AsButton().Invoke();
 
             var sw = Stopwatch.StartNew();
-            while (sw.Elapsed.TotalSeconds < ActionTimeoutSec)
+            while (sw.Elapsed.TotalSeconds < timeoutSec)
             {
                 string status = ReadText(window, cf, "StatusText");
                 if (status.Contains(errorToken, StringComparison.OrdinalIgnoreCase) ||
@@ -146,11 +167,14 @@ internal static class Program
                 if (info.Length > 0 && info != infoBefore)
                 {
                     Console.WriteLine($"{label}: PASS {info}");
+                    // Capture AFTER the action completed and the tab shows its result.
+                    Thread.Sleep(TabRealizeMs);   // let the plots/heatmaps paint first
+                    CaptureWindow(window, screenshotPath);
                     return true;
                 }
                 Thread.Sleep(PollMs);
             }
-            Console.WriteLine($"{label}: FAIL timeout after {ActionTimeoutSec}s "
+            Console.WriteLine($"{label}: FAIL timeout after {timeoutSec}s "
                               + $"(status: \"{ReadText(window, cf, "StatusText")}\")");
             return false;
         }
@@ -159,6 +183,37 @@ internal static class Program
             Console.WriteLine($"{label}: FAIL exception {ex.GetType().Name}: {ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Capture the whole app window to a PNG via FlaUI's UIA-driven element capture and
+    /// report the saved path + byte size. Best-effort: a capture failure is logged but
+    /// does not fail the tab (the functional assertion already passed).
+    /// </summary>
+    private static void CaptureWindow(Window window, string path)
+    {
+        try
+        {
+            using FlaUI.Core.Capturing.CaptureImage image =
+                FlaUI.Core.Capturing.Capture.Element(window);
+            image.ToFile(path);
+            long size = new FileInfo(path).Length;
+            Console.WriteLine($"  screenshot: {path} ({size} bytes)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  screenshot FAILED for {path}: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Absolute screenshots sink under the repo: apps/xdet-console/_screens/.</summary>
+    private static string ScreensDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pyproject.toml")))
+            dir = dir.Parent;
+        string root = dir?.FullName ?? AppContext.BaseDirectory;
+        return Path.Combine(root, "apps", "xdet-console", "_screens");
     }
 
     /// <summary>Read a WPF TextBlock's text: its automation Name equals its Text content.</summary>

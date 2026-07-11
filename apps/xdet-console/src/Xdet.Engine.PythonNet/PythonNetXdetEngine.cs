@@ -153,6 +153,178 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    // -- QUARANTINE real-image plumbing/sanity (SPEC-REALDATA-001) ------------
+
+    /// <summary>
+    /// [HARD] QUARANTINE plumbing/sanity ONLY. Mirrors the frozen realdata sample arm
+    /// (<c>tests/test_tc_realdata_arms.py::test_tc_001_offset_arm_sanity</c>) EXACTLY:
+    /// <c>require_edrogi</c> -&gt; first non-<c>_result</c> raw under <c>아크릴</c> via
+    /// <c>_load_full</c> (signal) -&gt; <c>build_offset_calibset</c> from
+    /// <c>16bit cal/MasterDark.raw</c> (via <c>_load_full</c>) -&gt;
+    /// <c>modules.offset.process(signal, calib, corr_params())</c> -&gt; the
+    /// <c>_assert_sane</c> checks. No new load/DSP path is invented and nothing is fitted,
+    /// tuned, or treated as a numeric golden. The stats + downsampled before/after previews
+    /// are all produced HERE (engine-side numpy), never in the UI (SPEC-VIEWER-001).
+    /// </summary>
+    public RealImageSanityResult RunRealImageOffsetSanity()
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic builtins = Py.Import("builtins");
+            dynamic pathlib = Py.Import("pathlib");
+            dynamic ing = Py.Import("scripts.ingest_edrogi");
+            dynamic offset = Py.Import("modules.offset");
+            dynamic corrections = Py.Import("tests.modules.phantoms.corrections");
+
+            // Resolve the sample tree by an ABSOLUTE path so the verdict does not depend
+            // on the launched app's working directory. require_edrogi/edrogi_available
+            // both accept an explicit root; passing the absolute repo path reuses the
+            // frozen helpers unchanged while staying CWD-independent.
+            string edrogiRoot = Path.Combine(FindRepoRoot(), "images", "에드로지16BIT");
+
+            // Availability is a clean bool (no pytest.skip raise) — reuse edrogi_available.
+            bool available = ((PyObject)ing.edrogi_available(edrogiRoot)).As<bool>();
+            if (!available)
+                return RealImageSanityResult.Absent(edrogiRoot);
+
+            // Reuse require_edrogi verbatim (asserts presence; no skip when available).
+            ing.require_edrogi(edrogiRoot);
+
+            // signal := first non-"_result" raw under 아크릴 (mirror of the arm's _first_raw:
+            // sorted(rglob("*.raw")), skip vendor "_result.raw" outputs).
+            dynamic acrylicDir = pathlib.Path(Path.Combine(edrogiRoot, "아크릴"));
+            PyObject sortedRaws = (PyObject)builtins.sorted(acrylicDir.rglob("*.raw"));
+            string signalFull = "";
+            string signalName = "";
+            long nRaw = sortedRaws.Length();
+            for (long i = 0; i < nRaw; i++)
+            {
+                using PyObject p = sortedRaws[(int)i];
+                string name = ((PyObject)p.GetAttr("name")).As<string>();
+                if (!name.EndsWith("_result.raw", StringComparison.Ordinal))
+                {
+                    signalFull = p.ToString() ?? "";
+                    signalName = name;
+                    break;
+                }
+            }
+            if (signalFull.Length == 0)
+                return new RealImageSanityResult(
+                    true, false,
+                    "QUARANTINE 배관/sanity (수치 golden 아님): no signal raw under 아크릴",
+                    "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, null, null);
+
+            // Load exactly as the arm does: _load_full (signal + MasterDark), then
+            // build_offset_calibset(MasterDark) and offset.process(signal, calib, corr_params()).
+            dynamic signal = ing._load_full(pathlib.Path(signalFull));
+            string masterdarkFull = Path.Combine(edrogiRoot, "16bit cal", "MasterDark.raw");
+            dynamic masterdark = ing._load_full(pathlib.Path(masterdarkFull));
+            dynamic calib = ing.build_offset_calibset(masterdark);
+            dynamic corrParams = corrections.corr_params();
+            dynamic outFrame = offset.process(signal, calib, corrParams);
+
+            // Sanity verdict — the _assert_sane checks, computed engine-side over the golden
+            // output: shape (3072,3072) / dtype float32 / all-finite / std > 0 (non-degenerate).
+            PyObject outPix = (PyObject)outFrame.pixel;
+            PyObject shape = (PyObject)outFrame.pixel.shape;
+            int rows = ((PyObject)shape[0]).As<int>();
+            int cols = ((PyObject)shape[1]).As<int>();
+            string dtype = ((PyObject)outFrame.pixel.dtype.name).As<string>();
+            bool finite = ItemAsBool(np.all(np.isfinite(outPix)));
+            double std = ItemAsDouble(np.std(outPix));
+            double min = ItemAsDouble(np.min(outPix));
+            double max = ItemAsDouble(np.max(outPix));
+            double mean = ItemAsDouble(np.mean(outPix));
+            bool sane = rows == 3072 && cols == 3072 && dtype == "float32" && finite && std > 0.0;
+
+            // Downsample the raw signal (before) and the offset output (after) to ~512x512
+            // ENGINE-side (block-mean) so the UI renders heatmaps with zero DSP.
+            FrameData before = DownsamplePreview((PyObject)signal.pixel, np, builtins, 512);
+            FrameData after = DownsamplePreview(outPix, np, builtins, 512);
+
+            string status = sane
+                ? $"QUARANTINE 배관/sanity (수치 golden 아님): offset EXECUTED on real {rows}x{cols} frame; "
+                  + $"finite={finite}, std={std:G4} (>0), dtype={dtype}"
+                : $"QUARANTINE 배관/sanity (수치 golden 아님): SANITY FAILED "
+                  + $"(shape={rows}x{cols}, dtype={dtype}, finite={finite}, std={std:G4})";
+
+            return new RealImageSanityResult(
+                true, sane, status, signalName, rows, cols, dtype, finite, std, min, max, mean,
+                before, after);
+        }
+    }
+
+    /// <summary>
+    /// Engine-side block-mean downsample of a full-res frame to about
+    /// <paramref name="target"/> x <paramref name="target"/> for a display-only heatmap
+    /// preview. Pure Python-side numpy (crop -&gt; reshape -&gt; mean over the block axes):
+    /// the UI never touches full-res pixels (SPEC-VIEWER-001, C-20 memory guard).
+    /// </summary>
+    private static FrameData DownsamplePreview(PyObject pix, dynamic np, dynamic builtins, int target)
+    {
+        dynamic arr = np.asarray(pix, np.float32);
+        PyObject shape = (PyObject)arr.shape;
+        int rows = ((PyObject)shape[0]).As<int>();
+        int cols = ((PyObject)shape[1]).As<int>();
+
+        int fr = Math.Max(1, rows / target);
+        int fc = Math.Max(1, cols / target);
+        int outR = rows / fr;
+        int outC = cols / fc;
+        int h = outR * fr;
+        int w = outC * fc;
+
+        // crop to a block-divisible (h, w), then average each (fr x fc) block.
+        PyObject rowSlice = (PyObject)builtins.slice(0, h);
+        PyObject colSlice = (PyObject)builtins.slice(0, w);
+        using var idx = new PyTuple(new[] { rowSlice, colSlice });
+        PyObject cropped = ((PyObject)arr)[idx];
+        dynamic reshaped = ((dynamic)cropped).reshape(outR, fr, outC, fc);
+        using var axes = new PyTuple(new PyObject[] { new PyInt(1), new PyInt(3) });
+        dynamic block = np.mean(reshaped, axes);   // (outR, outC), block-mean
+
+        float[] buf = NumpyToFloatArrayFast((PyObject)block, np);
+        return FrameData.FromPixels(buf, outR, outC);
+    }
+
+    /// <summary>
+    /// Bulk float32 marshal for the previews via a numpy <c>tofile</c> scratch buffer:
+    /// numpy writes the C-order float32 bytes once (native little-endian on x86) and C#
+    /// reads them back with a single <c>Buffer.BlockCopy</c>. Used instead of the
+    /// per-element <see cref="NumpyToFloatArray"/> because a ~512x512 preview has ~262k
+    /// elements — a per-element <c>.item()</c> loop would be prohibitively slow — and
+    /// pythonnet 3.0.5 exposes no <c>PyBytes</c> for an in-memory bulk transfer. The scratch
+    /// file is a small (~1MB) transient in the OS temp dir (never a full-res raw, never
+    /// under <c>data/</c>), deleted immediately.
+    /// </summary>
+    private static float[] NumpyToFloatArrayFast(PyObject arr, dynamic np)
+    {
+        dynamic contiguous = np.ascontiguousarray(arr, np.float32);
+        string tmp = Path.Combine(Path.GetTempPath(), "xdet_preview_" + Guid.NewGuid().ToString("N") + ".f32");
+        try
+        {
+            contiguous.tofile(tmp);   // raw C-order little-endian float32, closed on return
+            byte[] raw = File.ReadAllBytes(tmp);
+            var floats = new float[raw.Length / sizeof(float)];
+            Buffer.BlockCopy(raw, 0, floats, 0, raw.Length);
+            return floats;
+        }
+        finally
+        {
+            try { File.Delete(tmp); } catch { /* best-effort scratch cleanup */ }
+        }
+    }
+
+    private static bool ItemAsBool(dynamic numpyScalar)
+    {
+        // numpy bool_ scalar -> native Python bool via .item(), then to CLR bool.
+        PyObject s = (PyObject)numpyScalar;
+        using PyObject native = s.InvokeMethod("item");
+        return native.As<bool>();
+    }
+
     // -- fidelity / reference surface (P1.5 proof only) ----------------------
 
     /// <summary>

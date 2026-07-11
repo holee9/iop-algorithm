@@ -38,4 +38,19 @@ public interface IXdetEngine
         OffsetParams offsetParams,
         GainCalibData gainCalib,
         GainParams gainParams);
+
+    /// <summary>
+    /// [HARD] QUARANTINE plumbing/sanity ONLY (SPEC-REALDATA-001). Run the golden OFFSET
+    /// stage on a REAL edrogi acquisition frame to prove the pipeline EXECUTES on a real
+    /// 3072x3072 frame and yields finite, non-degenerate output — this is NOT a numeric
+    /// golden (no tolerance is fitted; no output is a reference). Reuses the frozen
+    /// realdata sample arm verbatim: <c>scripts.ingest_edrogi.require_edrogi</c> /
+    /// <c>_load_full</c> / <c>build_offset_calibset</c> plus <c>modules.offset.process</c>,
+    /// then the <c>_assert_sane</c> checks (shape (3072,3072) / float32 / finite / std&gt;0).
+    /// When the sample tree is absent, returns a <see cref="RealImageSanityResult"/> with
+    /// <see cref="RealImageSanityResult.ImagesPresent"/> == false (no exception). All stats
+    /// and the downsampled before/after previews are computed engine-side (SPEC-VIEWER-001:
+    /// the UI does no DSP and no downsampling).
+    /// </summary>
+    RealImageSanityResult RunRealImageOffsetSanity();
 }

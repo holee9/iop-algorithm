@@ -3,6 +3,9 @@ bin/
 obj/
 *.log
 
+# UI-smoke screenshots (SPEC-REALDATA-001 real-image tab): run artifacts, not source.
+_screens/
+
 # Rider / VS
 .vs/
 .idea/

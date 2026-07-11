@@ -149,6 +149,50 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void RealImageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryBeginWork()) return;
+        try
+        {
+            // [HARD] QUARANTINE 배관/sanity ONLY (SPEC-REALDATA-001). The seam runs the
+            // golden offset on a REAL edrogi frame and returns engine-computed sanity
+            // stats + engine-downsampled before/after previews. The UI performs no DSP
+            // and never touches full-res pixels (SPEC-VIEWER-001).
+            RealImageSanityResult result = await Task.Run(() => Seam!.RunRealImageOffsetSanity());
+
+            if (!result.ImagesPresent)
+            {
+                // Honest, non-error verdict when the sample tree is absent.
+                RealImageInfo.Text = result.Status;
+                StatusText.Text = "engine: ready (real image: images absent)";
+                return;
+            }
+
+            if (result.BeforePreview is not null)
+                RenderHeatmap(RealImageInputPlot, result.BeforePreview,
+                    "REAL signal (QUARANTINE, ~512² preview)");
+            if (result.AfterPreview is not null)
+                RenderHeatmap(RealImageOutputPlot, result.AfterPreview,
+                    "REAL offset-corrected (QUARANTINE, ~512² preview)");
+
+            // All numbers are engine-computed (golden/numpy) — the UI derives nothing.
+            RealImageInfo.Text =
+                $"{result.Status}  file={result.SignalName}  " +
+                $"[shape {result.Rows}x{result.Cols}, dtype {result.Dtype}, finite={result.Finite}, " +
+                $"std={result.Std:G4}, min={result.Min:G4}, max={result.Max:G4}, mean={result.Mean:G4}]  " +
+                $"sane={result.Sane}";
+            StatusText.Text = "engine: ready (real image sanity done)";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "real image error: " + ex.Message;
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
     // -- rendering (pure display: array selection + float->double cast only) ------
 
     /// <summary>Render a frame as a 2-D ScottPlot heatmap (row-major -> [row, col]).</summary>
@@ -237,6 +281,7 @@ public partial class MainWindow : Window
         OffsetButton.IsEnabled = false;
         MtfButton.IsEnabled = false;
         PipelineButton.IsEnabled = false;
+        RealImageButton.IsEnabled = false;
         return true;
     }
 
@@ -246,5 +291,6 @@ public partial class MainWindow : Window
         OffsetButton.IsEnabled = true;
         MtfButton.IsEnabled = true;
         PipelineButton.IsEnabled = true;
+        RealImageButton.IsEnabled = true;
     }
 }
