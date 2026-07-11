@@ -195,6 +195,16 @@ def _calibration_gate(
     given `domain` context vs a specified CalibSet domain) and cross-stage domain
     / beam_quality inconsistency; an UNSPECIFIED domain, a None beam_quality, or a
     None `domain` context skips its check (no regression on the five checks above).
+
+    @MX:WARN: [AUTO] _calibration_gate carries 11 sequential guard branches
+    (missing / resolution / kind-stage / panel_id-expected / panel_id-mutual /
+    timestamp-validity / domain-context / domain-UNSPECIFIED / domain-mutual /
+    beam_quality-None / beam_quality-mutual) -- over the branch>=8 WARN threshold.
+    @MX:REASON: this is the sole calibration-admission point for the whole
+    pipeline (SWR-000-5); CALDOM (SPEC-CALDOM-001) layered 5 descriptor branches
+    onto the original 5, and any new check MUST preserve the "UNSPECIFIED / None
+    skips, never regresses the base five" invariant or it silently changes which
+    calibration is admitted.
     """
     seen_panel: tuple[str, str] | None = None  # (stage, panel_id)
     seen_domain: tuple[str, CalibDomain] | None = None  # (stage, domain)
