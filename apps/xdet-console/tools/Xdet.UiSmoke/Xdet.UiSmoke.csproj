@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- SPEC-XSEAM-001 P1.5 end-to-end GUI smoke. This console runner drives the REAL
+       WPF app (Xdet.Console.App) through the Windows UI Automation (UIA3) tree via
+       FlaUI: it launches the built exe, waits for the embedded-Python engine to reach
+       "ready", then selects each tab and clicks its button, asserting each action
+       updates the tab's info TextBlock to a non-error value. It requires an
+       INTERACTIVE desktop session (UIA cannot attach to a headless window), which is
+       why it lives in tools/ and NOT in tests/Xdet.Engine.Tests (that suite stays
+       headless-safe). Read-only toward the app and the golden. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Xdet.UiSmoke</RootNamespace>
+    <AssemblyName>Xdet.UiSmoke</AssemblyName>
+    <UseWPF>false</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,553 @@
+using System.Diagnostics;
+using FlaUI.Core;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Conditions;
+using FlaUI.UIA3;
+
+namespace Xdet.UiSmoke;
+
+/// <summary>
+/// SPEC-XSEAM-001 P1.5 end-to-end GUI smoke driver. Launches the REAL WPF app and
+/// exercises every tab's button through the Windows UI Automation tree (FlaUI/UIA3):
+/// wait for the embedded-Python engine to reach "ready", then for each tab
+/// select -> click -> assert the tab's info TextBlock updates to a non-error value,
+/// and CAPTURE a PNG screenshot of the window AFTER each action completes. Exit code 0
+/// iff MTF, Pipeline and Real Image all PASS (plus the Viewer registered arms + P0 loop).
+/// Requires an interactive desktop.
+///
+/// The Pipeline tab runs the REAL registered offset->gain pipeline on the edrogi 3072x3072
+/// frame with REAL calibs, and the Real Image tab runs the QUARANTINE plumbing/sanity offset
+/// on a REAL edrogi 3072x3072 frame (SPEC-REALDATA-001) — both load an ~18M-pixel raw, so
+/// they get a generous per-action budget. MTF is the only remaining SYNTHETIC tab (the
+/// registered set has no slanted edge; real MTF is blocked on the guiding set, #33).
+/// Screenshots (mtf/pipeline_registered/realimage + the registered arms, viewer loop, and a
+/// ready overview) are written to apps/xdet-console/_screens/ (a build artifact, gitignored).
+/// </summary>
+internal static class Program
+{
+    // Poll cadence + budgets (see "FlaUI timing decisions" in the handoff report).
+    private const int EngineReadyTimeoutSec = 60;   // embedded CPython bootstrap
+    private const int ActionTimeoutSec = 30;        // one seam call round-trip
+    private const int RealImageTimeoutSec = 120;    // loads a real 3072² raw + offset
+    private const int PollMs = 250;
+    private const int TabRealizeMs = 400;           // let WPF realize the tab content
+
+    private static int Main(string[] args)
+    {
+        string exePath = args.Length > 0 ? args[0] : DefaultExePath();
+        Console.WriteLine("=== XDET UI smoke (FlaUI/UIA3) — SPEC-XSEAM-001 P1.5 ===");
+        Console.WriteLine("exe: " + exePath);
+
+        if (!File.Exists(exePath))
+        {
+            Console.WriteLine("FATAL: app exe not found. Build Xdet.Console.App (Release) first.");
+            return 3;
+        }
+
+        // Viewer P0-loop file paths, injected into the app via env presets
+        // (XDET_VIEWER_OPEN_PATH / XDET_VIEWER_SAVE_PATH) BEFORE launch so the child
+        // inherits them. The app then bypasses the native Open/Save dialogs and uses
+        // these paths directly — a DELIBERATE decision: automating the native Win32
+        // file dialogs through UIA is unreliable/non-deterministic, so we drive the
+        // full Load->Process->Save flow deterministically (and still capture the three
+        // viewer screenshots). The real native dialogs remain in place for end users.
+        string repoRoot = RepoRoot();
+        string viewerOpenPath = Path.Combine(repoRoot, "images", "에드로지16BIT", "16bit cal", "MasterDark.raw");
+        string viewerSavePath = Path.Combine(Path.GetTempPath(),
+            "xdet_viewer_smoke_" + Guid.NewGuid().ToString("N") + ".npz");
+        Environment.SetEnvironmentVariable("XDET_VIEWER_OPEN_PATH", viewerOpenPath);
+        Environment.SetEnvironmentVariable("XDET_VIEWER_SAVE_PATH", viewerSavePath);
+
+        Application? app = null;
+        UIA3Automation? automation = null;
+        try
+        {
+            automation = new UIA3Automation();
+            app = Application.Launch(exePath);
+
+            Window? window = app.GetMainWindow(automation, TimeSpan.FromSeconds(30));
+            if (window is null)
+            {
+                Console.WriteLine("FATAL: could not obtain the app main window (UIA could not attach). "
+                                  + "An interactive desktop session is required.");
+                return 3;
+            }
+            Console.WriteLine("main window: \"" + window.Title + "\"");
+            var cf = automation.ConditionFactory;
+
+            // 1) Wait for the engine to finish its embedded-interpreter bootstrap.
+            if (!WaitEngineReady(window, cf))
+            {
+                Console.WriteLine("FATAL: engine never reached ready. last status: \""
+                                  + ReadText(window, cf, "StatusText") + "\"");
+                return 2;
+            }
+            Console.WriteLine("engine ready — status: \"" + ReadText(window, cf, "StatusText") + "\"");
+
+            // Screenshot sink (absolute, gitignored build artifact). Capture a
+            // full-window overview on the ready screen before driving any tab.
+            string screensDir = ScreensDir();
+            Directory.CreateDirectory(screensDir);
+            Console.WriteLine("screens dir: " + screensDir);
+            CaptureWindow(window, Path.Combine(screensDir, "overview.png"));
+            Console.WriteLine();
+
+            // 2) Drive each tab's button, assert its info TextBlock updates, and capture
+            //    a screenshot AFTER the action completes. Lookup is by AutomationId
+            //    (order-independent; we key on ids, not XAML tab position). The Real
+            //    Image tab loads a real 3072² raw so it gets the generous budget.
+            // MTF is the only remaining SYNTHETIC tab (registered set has no slanted edge, #33).
+            bool mtf = RunTab(window, cf, "MTF", "MtfTab", "MtfButton", "MtfInfo",
+                "MTF error", ActionTimeoutSec, Path.Combine(screensDir, "mtf.png"));
+            // Pipeline now runs the REAL registered offset->gain pipeline on the edrogi 3072²
+            // frame with REAL calibs (MasterDark + CalSet_19008), so it loads real data + runs
+            // two golden stages -> use the generous budget and capture pipeline_registered.png
+            // (real before/after/diff). Cleanly PASSes (info updates, no error) when the sample
+            // tree is absent (RunRegisteredPipeline returns an images-absent verdict).
+            bool pipeline = RunTab(window, cf, "PIPELINE", "PipelineTab", "PipelineButton", "PipelineInfo",
+                "pipeline error", RealImageTimeoutSec, Path.Combine(screensDir, "pipeline_registered.png"));
+            bool realImage = RunTab(window, cf, "REALIMAGE", "RealImageTab", "RealImageButton", "RealImageInfo",
+                "real image error", RealImageTimeoutSec, Path.Combine(screensDir, "realimage.png"));
+
+            // 3) Drive the Viewer PRIMARY flow: the REGISTERED test set. For each arm
+            //    (offset/gain/defect) select it in the ArmSelector combobox, click 'Run
+            //    registered arm', capture a per-arm screenshot, then Save one arm's output
+            //    and assert the npz exists. The save path is injected via the env preset.
+            bool registered = RunRegisteredArms(window, cf, screensDir, viewerOpenPath, viewerSavePath);
+
+            // 3b) Compare-and-inspect layer: run the offset arm, set a fixed SHARED Window/Level,
+            //     and capture p1_diff_wl.png — the three heatmaps (before/after/engine-diff) with
+            //     the shared scale applied. (The pixel probe is hover-only; the xUnit readout test
+            //     covers it, so it is not scripted here.)
+            bool diffWl = RunDiffWlShot(window, cf, screensDir, viewerOpenPath);
+
+            // 4) Drive the SECONDARY (arbitrary) Viewer loop end-to-end: Open image ->
+            //    Run offset -> Save output, capturing a screenshot after each step and
+            //    asserting the saved npz exists. File paths come from the env presets.
+            bool viewer = RunViewer(window, cf, screensDir, viewerOpenPath, viewerSavePath);
+
+            Console.WriteLine();
+            bool all = mtf && pipeline && realImage && registered && diffWl && viewer;
+            Console.WriteLine("=== RESULT: " + (all ? "ALL PASS" : "FAIL") + " ===");
+            return all ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("FATAL: unhandled exception: " + ex.GetType().Name + ": " + ex.Message);
+            Console.WriteLine(ex.StackTrace);
+            return 3;
+        }
+        finally
+        {
+            try { app?.Close(); } catch { /* best-effort */ }
+            try { if (app is not null && !app.HasExited) app.Kill(); } catch { /* best-effort */ }
+            automation?.Dispose();
+            Console.Out.Flush();
+        }
+    }
+
+    private static bool WaitEngineReady(Window window, ConditionFactory cf)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < EngineReadyTimeoutSec)
+        {
+            string status = ReadText(window, cf, "StatusText");
+            if (status.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+                status.Contains("error", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("engine init FAILED — status: \"" + status + "\"");
+                return false;
+            }
+            // Ready line is exactly "engine: ready" (before any action runs).
+            if (status.Contains("ready", StringComparison.OrdinalIgnoreCase))
+                return true;
+            Thread.Sleep(PollMs);
+        }
+        return false;
+    }
+
+    private static bool RunTab(
+        Window window, ConditionFactory cf,
+        string label, string tabId, string buttonId, string infoId, string errorToken,
+        int timeoutSec, string screenshotPath)
+    {
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId(tabId));
+            if (tab is null)
+            {
+                Console.WriteLine($"{label}: FAIL tab '{tabId}' not found");
+                return false;
+            }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);   // WPF realizes the newly selected tab's content
+
+            string infoBefore = ReadText(window, cf, infoId);
+
+            var button = window.FindFirstDescendant(cf.ByAutomationId(buttonId));
+            if (button is null)
+            {
+                Console.WriteLine($"{label}: FAIL button '{buttonId}' not found");
+                return false;
+            }
+            button.AsButton().Invoke();
+
+            var sw = Stopwatch.StartNew();
+            while (sw.Elapsed.TotalSeconds < timeoutSec)
+            {
+                string status = ReadText(window, cf, "StatusText");
+                if (status.Contains(errorToken, StringComparison.OrdinalIgnoreCase) ||
+                    status.Contains("error", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"{label}: FAIL {status}");
+                    return false;
+                }
+                string info = ReadText(window, cf, infoId);
+                if (info.Length > 0 && info != infoBefore)
+                {
+                    Console.WriteLine($"{label}: PASS {info}");
+                    // Capture AFTER the action completed and the tab shows its result.
+                    Thread.Sleep(TabRealizeMs);   // let the plots/heatmaps paint first
+                    CaptureWindow(window, screenshotPath);
+                    return true;
+                }
+                Thread.Sleep(PollMs);
+            }
+            Console.WriteLine($"{label}: FAIL timeout after {timeoutSec}s "
+                              + $"(status: \"{ReadText(window, cf, "StatusText")}\")");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"{label}: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drive the Viewer PRIMARY flow (feat/xseam-ui-expand): the REGISTERED edrogi test
+    /// set. Select the Viewer tab, then for each arm (offset/gain/defect) pick it in the
+    /// ArmSelector combobox, click 'Run registered arm', wait until ViewerStatus reports
+    /// the arm is done, and capture a per-arm screenshot (registered_offset/gain/defect.png).
+    /// Finally Save one arm's output (offset) via the env-preset path and assert the npz
+    /// exists. Skips cleanly (PASS) when the edrogi sample is absent (MasterDark proxy).
+    /// </summary>
+    private static bool RunRegisteredArms(
+        Window window, ConditionFactory cf, string screensDir, string edrogiProbe, string savePath)
+    {
+        Console.WriteLine();
+        Console.WriteLine("REGISTERED: Viewer primary flow (real signal + real calib arms)");
+        if (!File.Exists(edrogiProbe))
+        {
+            Console.WriteLine("REGISTERED: SKIP — edrogi sample absent: " + edrogiProbe);
+            return true;   // clean skip when images are absent (matches the xUnit suite)
+        }
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId("ViewerTab"));
+            if (tab is null) { Console.WriteLine("REGISTERED: FAIL tab 'ViewerTab' not found"); return false; }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);
+
+            // Each arm: select in the combobox, run, wait for "done", screenshot. The real
+            // 3072² acrylic frame + calib source load, so use the generous budget.
+            (string label, int index, string shot)[] arms =
+            {
+                ("offset", 0, "registered_offset.png"),
+                ("gain",   1, "registered_gain.png"),
+                ("defect", 2, "registered_defect.png"),
+            };
+            foreach (var (label, index, shot) in arms)
+            {
+                if (!SelectArm(window, cf, index, label)) return false;
+                // Wait for the ARM-SPECIFIC completion token ("{kind} arm done") — a generic
+                // "done" would match the previous arm's stale status and pass prematurely.
+                if (!ClickAndWait(window, cf, "RunRegisteredArmButton", "ViewerStatus", label + " arm done",
+                        RealImageTimeoutSec, "REGISTERED/" + label)) return false;
+                Thread.Sleep(TabRealizeMs);   // let the heatmaps paint first
+                CaptureWindow(window, Path.Combine(screensDir, shot));
+            }
+
+            // Save one arm's output (the current output is 'defect' from the loop above;
+            // re-run 'offset' so the saved frame is the deterministic offset correction).
+            if (!SelectArm(window, cf, 0, "offset")) return false;
+            if (!ClickAndWait(window, cf, "RunRegisteredArmButton", "ViewerStatus", "offset arm done",
+                    RealImageTimeoutSec, "REGISTERED/offset(save-prep)")) return false;
+
+            // Delete any prior save so the assertion proves THIS registered-arm save wrote it.
+            try { if (File.Exists(savePath)) File.Delete(savePath); } catch { /* best-effort */ }
+            if (!ClickAndWait(window, cf, "ViewerSaveButton", "ViewerStatus", "saved",
+                    ActionTimeoutSec, "REGISTERED/save")) return false;
+            if (!File.Exists(savePath))
+            {
+                Console.WriteLine("REGISTERED: FAIL saved npz not found: " + savePath);
+                return false;
+            }
+            long size = new FileInfo(savePath).Length;
+            Console.WriteLine($"REGISTERED: PASS saved arm npz exists: {savePath} ({size} bytes)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"REGISTERED: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drive the "compare and inspect" layer (feat/xseam-ui-expand): run the registered
+    /// OFFSET arm so before/after/diff are all populated, then set the SHARED Window/Level
+    /// min/max inputs to fixed values (applying the SAME color scale to the before AND after
+    /// heatmaps), and capture <c>p1_diff_wl.png</c> — the three heatmaps (before / after /
+    /// engine-computed diff) with the shared scale applied. The pixel probe is hover-only and
+    /// is verified by the xUnit readout test, so it is not scripted here. Skips cleanly (PASS)
+    /// when the edrogi sample is absent.
+    /// </summary>
+    private static bool RunDiffWlShot(
+        Window window, ConditionFactory cf, string screensDir, string edrogiProbe)
+    {
+        Console.WriteLine();
+        Console.WriteLine("DIFF/WL: three heatmaps (before/after/diff) + shared Window/Level");
+        if (!File.Exists(edrogiProbe))
+        {
+            Console.WriteLine("DIFF/WL: SKIP — edrogi sample absent: " + edrogiProbe);
+            return true;   // clean skip when images are absent (matches the xUnit suite)
+        }
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId("ViewerTab"));
+            if (tab is null) { Console.WriteLine("DIFF/WL: FAIL tab 'ViewerTab' not found"); return false; }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);
+
+            // Run the OFFSET arm so before/after/diff are populated (real 3072² frame + calib).
+            if (!SelectArm(window, cf, 0, "offset")) return false;
+            if (!ClickAndWait(window, cf, "RunRegisteredArmButton", "ViewerStatus", "offset arm done",
+                    RealImageTimeoutSec, "DIFF/WL/offset")) return false;
+
+            // Note: ScottPlot's WpfPlot renders via a SkiaSharp surface and does not surface
+            // its AutomationId as a discrete UIA element, so the diff heatmap is verified
+            // visually in the captured screenshot (below) rather than by a UIA lookup. The
+            // shared-W/L TextBoxes ARE standard UIA elements and are driven directly.
+            bool diffPlotInTree = window.FindFirstDescendant(cf.ByAutomationId("ViewerDiffPlot")) is not null;
+            Console.WriteLine("DIFF/WL: ViewerDiffPlot UIA element present = " + diffPlotInTree
+                + " (heatmap is verified in the screenshot regardless)");
+
+            // Set the SHARED W/L min/max to fixed values -> same color range on before + after.
+            var wlMin = window.FindFirstDescendant(cf.ByAutomationId("ViewerWlMin"))?.AsTextBox();
+            var wlMax = window.FindFirstDescendant(cf.ByAutomationId("ViewerWlMax"))?.AsTextBox();
+            if (wlMin is null || wlMax is null)
+            {
+                Console.WriteLine("DIFF/WL: FAIL shared W/L inputs not found");
+                return false;
+            }
+            wlMin.Text = "0";
+            wlMax.Text = "4000";
+            Thread.Sleep(TabRealizeMs);   // let the heatmaps re-render with the shared scale
+            Console.WriteLine($"DIFF/WL: shared W/L set -> min={wlMin.Text} max={wlMax.Text}");
+
+            string shot = Path.Combine(screensDir, "p1_diff_wl.png");
+            CaptureWindow(window, shot);
+            if (!File.Exists(shot))
+            {
+                Console.WriteLine("DIFF/WL: FAIL screenshot not written: " + shot);
+                return false;
+            }
+            Console.WriteLine("DIFF/WL: PASS three-heatmap shared-W/L screenshot written: " + shot);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"DIFF/WL: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Select the arm at <paramref name="index"/> in the ArmSelector combobox (WPF, UIA3).
+    /// Logs the resolved selection; returns false when the combobox or item is unreachable.
+    /// </summary>
+    private static bool SelectArm(Window window, ConditionFactory cf, int index, string label)
+    {
+        try
+        {
+            var combo = window.FindFirstDescendant(cf.ByAutomationId("ArmSelector"))?.AsComboBox();
+            if (combo is null) { Console.WriteLine($"REGISTERED/{label}: FAIL ArmSelector not found"); return false; }
+            combo.Select(index);
+            Thread.Sleep(TabRealizeMs);
+            string sel = combo.SelectedItem?.Text ?? "(?)";
+            Console.WriteLine($"REGISTERED/{label}: arm selected -> \"{sel}\"");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"REGISTERED/{label}: FAIL select exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drive the Viewer SECONDARY (arbitrary) loop end-to-end (feat/xseam-ui-expand):
+    /// select the Viewer tab, then Open image... -> Run offset -> Save output..., capturing a screenshot
+    /// (viewer_loaded / viewer_processed / viewer_saved) after each step and asserting
+    /// the saved npz exists. The Open/Save file paths are injected via env presets
+    /// (set in Main before launch), so the native dialogs are bypassed and the full
+    /// flow is deterministic. Skips cleanly (PASS) when the edrogi sample is absent.
+    /// </summary>
+    private static bool RunViewer(
+        Window window, ConditionFactory cf, string screensDir, string openPath, string savePath)
+    {
+        Console.WriteLine();
+        Console.WriteLine("VIEWER: P0 loop (open -> run offset -> save)");
+        if (!File.Exists(openPath))
+        {
+            Console.WriteLine("VIEWER: SKIP — edrogi sample absent: " + openPath);
+            return true;   // clean skip when images are absent (matches the xUnit suite)
+        }
+        Console.WriteLine("VIEWER: open preset = " + openPath);
+        Console.WriteLine("VIEWER: save preset = " + savePath);
+        Console.WriteLine("VIEWER: file dialogs bypassed via env presets "
+            + "(XDET_VIEWER_OPEN_PATH / XDET_VIEWER_SAVE_PATH) for a deterministic flow.");
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId("ViewerTab"));
+            if (tab is null) { Console.WriteLine("VIEWER: FAIL tab 'ViewerTab' not found"); return false; }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);
+
+            // 1) Open image... (preset path). The real edrogi 3072² raw loads, so use
+            //    the generous budget. Wait until ViewerStatus reports "loaded".
+            if (!ClickAndWait(window, cf, "OpenImageButton", "ViewerStatus", "loaded",
+                    RealImageTimeoutSec, "VIEWER/open")) return false;
+            Thread.Sleep(TabRealizeMs);
+            CaptureWindow(window, Path.Combine(screensDir, "viewer_loaded.png"));
+
+            // 2) Run offset (golden offset on the 3072² frame). Wait until "processed".
+            if (!ClickAndWait(window, cf, "ViewerProcessButton", "ViewerStatus", "processed",
+                    RealImageTimeoutSec, "VIEWER/process")) return false;
+            Thread.Sleep(TabRealizeMs);
+            CaptureWindow(window, Path.Combine(screensDir, "viewer_processed.png"));
+
+            // 3) Save output... (preset path, outside data/). Wait until "saved".
+            if (!ClickAndWait(window, cf, "ViewerSaveButton", "ViewerStatus", "saved",
+                    ActionTimeoutSec, "VIEWER/save")) return false;
+            Thread.Sleep(TabRealizeMs);
+            CaptureWindow(window, Path.Combine(screensDir, "viewer_saved.png"));
+
+            // Assert the saved npz exists (SaveProcessedFrame writes exactly the preset
+            // path: a trailing '.npz' is stripped then re-appended -> 'foo.npz').
+            if (!File.Exists(savePath))
+            {
+                Console.WriteLine("VIEWER: FAIL saved npz not found: " + savePath);
+                return false;
+            }
+            long size = new FileInfo(savePath).Length;
+            Console.WriteLine($"VIEWER: PASS saved npz exists: {savePath} ({size} bytes)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"VIEWER: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Click the button <paramref name="buttonId"/> and poll the TextBlock
+    /// <paramref name="watchId"/> until its text contains <paramref name="successToken"/>
+    /// (PASS) or an error/failed/refused token (FAIL). Case-insensitive.
+    /// </summary>
+    private static bool ClickAndWait(
+        Window window, ConditionFactory cf,
+        string buttonId, string watchId, string successToken, int timeoutSec, string label)
+    {
+        var button = window.FindFirstDescendant(cf.ByAutomationId(buttonId));
+        if (button is null)
+        {
+            Console.WriteLine($"{label}: FAIL button '{buttonId}' not found");
+            return false;
+        }
+        button.AsButton().Invoke();
+
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < timeoutSec)
+        {
+            string watch = ReadText(window, cf, watchId);
+            if (watch.Contains(successToken, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"{label}: PASS {watch}");
+                return true;
+            }
+            if (watch.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                watch.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+                watch.Contains("refused", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"{label}: FAIL {watch}");
+                return false;
+            }
+            Thread.Sleep(PollMs);
+        }
+        Console.WriteLine($"{label}: FAIL timeout after {timeoutSec}s "
+                          + $"(watch: \"{ReadText(window, cf, watchId)}\")");
+        return false;
+    }
+
+    /// <summary>Walk up from this runner's base dir to the repo root (pyproject.toml).</summary>
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pyproject.toml")))
+            dir = dir.Parent;
+        return dir?.FullName ?? AppContext.BaseDirectory;
+    }
+
+    /// <summary>
+    /// Capture the whole app window to a PNG via FlaUI's UIA-driven element capture and
+    /// report the saved path + byte size. Best-effort: a capture failure is logged but
+    /// does not fail the tab (the functional assertion already passed).
+    /// </summary>
+    private static void CaptureWindow(Window window, string path)
+    {
+        try
+        {
+            using FlaUI.Core.Capturing.CaptureImage image =
+                FlaUI.Core.Capturing.Capture.Element(window);
+            image.ToFile(path);
+            long size = new FileInfo(path).Length;
+            Console.WriteLine($"  screenshot: {path} ({size} bytes)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  screenshot FAILED for {path}: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Absolute screenshots sink under the repo: apps/xdet-console/_screens/.</summary>
+    private static string ScreensDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pyproject.toml")))
+            dir = dir.Parent;
+        string root = dir?.FullName ?? AppContext.BaseDirectory;
+        return Path.Combine(root, "apps", "xdet-console", "_screens");
+    }
+
+    /// <summary>Read a WPF TextBlock's text: its automation Name equals its Text content.</summary>
+    private static string ReadText(Window window, ConditionFactory cf, string automationId)
+    {
+        var el = window.FindFirstDescendant(cf.ByAutomationId(automationId));
+        return el?.Name ?? string.Empty;
+    }
+
+    private static string DefaultExePath()
+    {
+        // Walk up from this runner's base dir to the repo root (pyproject.toml), then
+        // resolve the built WPF app exe under its Release output.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pyproject.toml")))
+            dir = dir.Parent;
+        string root = dir?.FullName ?? AppContext.BaseDirectory;
+        return Path.Combine(root, "apps", "xdet-console", "src", "Xdet.Console.App",
+            "bin", "Release", "net9.0-windows", "Xdet.Console.App.exe");
+    }
+}
