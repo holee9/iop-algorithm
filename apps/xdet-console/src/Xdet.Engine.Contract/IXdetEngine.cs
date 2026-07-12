@@ -53,4 +53,43 @@ public interface IXdetEngine
     /// the UI does no DSP and no downsampling).
     /// </summary>
     RealImageSanityResult RunRealImageOffsetSanity();
+
+    // -- Viewer P0 loop: open arbitrary image -> process -> save (usable) ------
+    // The adapter holds the loaded / processed frame as state ACROSS these three
+    // calls (LoadRawFrame sets it, ProcessLoadedFrame consumes+updates it,
+    // SaveProcessedFrame persists it). All DSP + downsampling happen engine-side.
+
+    /// <summary>
+    /// Load an ARBITRARY 16-bit raw test image via the golden and hold it as adapter
+    /// state. When a <c>&lt;name&gt;.json</c> sidecar exists next to the raw, the golden
+    /// <c>common.io.load_raw_frame</c> is used (the sidecar's <c>resolution</c> governs
+    /// the shape). Otherwise the shape is inferred from the payload: element count =
+    /// bytes/2 (uint16); if <paramref name="rows"/>*<paramref name="cols"/> is supplied
+    /// and matches it is used, else a perfect square (edrogi 3072x3072) then 3072x2560
+    /// is tried; if none matches a clear error verdict is returned (no crash). Real
+    /// images are QUARANTINE sanity — labeled, never a numeric golden. Returns a DTO
+    /// with stats (shape/dtype/min/max/mean/finite) + an engine-downsampled ~512x512
+    /// preview (the UI does zero DSP).
+    /// </summary>
+    LoadedFrameInfo LoadRawFrame(string path, int rows = 0, int cols = 0);
+
+    /// <summary>
+    /// Run the golden OFFSET stage (<c>modules.offset.process</c>) on the frame most
+    /// recently loaded by <see cref="LoadRawFrame"/>, using a synthetic OFFSET CalibSet
+    /// (<c>make_synthetic_calibset(shape, calib_kind_for_stage("offset"))</c> populated
+    /// with a ZERO dark map) + default Params, and hold the output as adapter state.
+    /// Returns before/after ~512x512 previews + engine-computed output stats. Returns a
+    /// clean failure verdict (no crash) when no frame is loaded.
+    /// </summary>
+    ProcessedFrameInfo ProcessLoadedFrame();
+
+    /// <summary>
+    /// Persist the frame most recently produced by <see cref="ProcessLoadedFrame"/> to
+    /// <paramref name="outputPath"/>. FIRST applies the replicated C-20 guard (refuse any
+    /// path under <c>&lt;repo&gt;/data</c>), then writes the npz (pixel float32 + masks
+    /// uint8) + JSON sidecar (noise / validation_mode / history / array_keys) in the
+    /// <c>apps.gui.export.export_frame</c> schema. Returns the written path + success, or
+    /// a clean guard-rejected / failed verdict (never throws).
+    /// </summary>
+    SaveResult SaveProcessedFrame(string outputPath);
 }

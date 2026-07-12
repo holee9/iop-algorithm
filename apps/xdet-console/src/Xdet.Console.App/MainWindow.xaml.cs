@@ -193,6 +193,148 @@ public partial class MainWindow : Window
         }
     }
 
+    // -- Viewer P0 loop: open arbitrary image -> process -> save ------------------
+    // The usable algorithm-verification loop. The UI drives 3 buttons; the engine
+    // loads/downsamples/processes/exports. Every number + preview comes from the
+    // seam (SPEC-VIEWER-001: the UI does no DSP and no downsampling). File paths may
+    // be injected via env presets (XDET_VIEWER_OPEN_PATH / XDET_VIEWER_SAVE_PATH) so
+    // the UI smoke can drive the full flow deterministically without automating the
+    // native file dialogs; when unset, the real native dialogs are used.
+
+    private bool _viewerLoaded;
+    private bool _viewerProcessed;
+
+    private async void OpenImageButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Resolve the path FIRST (env preset or native dialog), off the busy guard so
+        // a cancelled dialog leaves state untouched.
+        string? path = Environment.GetEnvironmentVariable("XDET_VIEWER_OPEN_PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Open 16-bit raw test image",
+                Filter = "Raw 16-bit (*.raw)|*.raw|All (*.*)|*.*",
+            };
+            if (dlg.ShowDialog() != true) return;
+            path = dlg.FileName;
+        }
+
+        if (!TryBeginWork()) return;
+        try
+        {
+            string p = path!;
+            LoadedFrameInfo info = await Task.Run(() => Seam!.LoadRawFrame(p));
+
+            if (!info.Loaded)
+            {
+                _viewerLoaded = false;
+                _viewerProcessed = false;
+                ViewerInfo.Text = info.Status;
+                ViewerStatus.Text = "viewer: load failed";
+                StatusText.Text = "viewer: load failed";
+                return;
+            }
+
+            if (info.Preview is not null)
+                RenderHeatmap(ViewerBeforePlot, info.Preview, "loaded (QUARANTINE, ~512² preview)");
+            // Clear any stale "after" from a previous frame.
+            ViewerAfterPlot.Plot.Clear();
+            ViewerAfterPlot.Refresh();
+
+            ViewerInfo.Text =
+                $"{info.Status}  min={info.Min:G4} max={info.Max:G4} mean={info.Mean:G4}";
+            ViewerStatus.Text = "viewer: loaded — click 'Run offset'";
+            _viewerLoaded = true;
+            _viewerProcessed = false;
+            StatusText.Text = "engine: ready (image loaded)";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "viewer load error: " + ex.Message;
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
+    private async void ViewerProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryBeginWork()) return;
+        try
+        {
+            ProcessedFrameInfo result = await Task.Run(() => Seam!.ProcessLoadedFrame());
+
+            if (!result.Processed)
+            {
+                _viewerProcessed = false;
+                ViewerStatus.Text = result.Status;
+                StatusText.Text = "viewer: process failed";
+                return;
+            }
+
+            if (result.BeforePreview is not null)
+                RenderHeatmap(ViewerBeforePlot, result.BeforePreview, "before (QUARANTINE, ~512² preview)");
+            if (result.AfterPreview is not null)
+                RenderHeatmap(ViewerAfterPlot, result.AfterPreview, "after offset (QUARANTINE, ~512² preview)");
+
+            ViewerInfo.Text =
+                $"{result.Status}  out[min={result.OutputMin:G4}, max={result.OutputMax:G4}, mean={result.OutputMean:G4}]";
+            ViewerStatus.Text = "viewer: processed — click 'Save output...'";
+            _viewerProcessed = true;
+            StatusText.Text = "engine: ready (offset done)";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "viewer process error: " + ex.Message;
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
+    private async void ViewerSaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        string? path = Environment.GetEnvironmentVariable("XDET_VIEWER_SAVE_PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Save processed frame",
+                Filter = "XFrame npz (*.npz)|*.npz|All (*.*)|*.*",
+                DefaultExt = ".npz",
+                FileName = "processed.npz",
+            };
+            if (dlg.ShowDialog() != true) return;
+            path = dlg.FileName;
+        }
+
+        if (!TryBeginWork()) return;
+        try
+        {
+            string p = path!;
+            SaveResult result = await Task.Run(() => Seam!.SaveProcessedFrame(p));
+
+            // A guard rejection or error is reported in the status line, never a crash.
+            ViewerStatus.Text = result.Success
+                ? $"viewer: saved -> {result.Path}"
+                : (result.GuardRejected ? "viewer: save refused (C-20) — " : "viewer: save failed — ") + result.Message;
+            StatusText.Text = result.Success
+                ? "engine: ready (saved)"
+                : (result.GuardRejected ? "viewer: save refused (C-20 guard)" : "viewer: save failed");
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "viewer save error: " + ex.Message;
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
     // -- rendering (pure display: array selection + float->double cast only) ------
 
     /// <summary>Render a frame as a 2-D ScottPlot heatmap (row-major -> [row, col]).</summary>
@@ -282,6 +424,9 @@ public partial class MainWindow : Window
         MtfButton.IsEnabled = false;
         PipelineButton.IsEnabled = false;
         RealImageButton.IsEnabled = false;
+        OpenImageButton.IsEnabled = false;
+        ViewerProcessButton.IsEnabled = false;
+        ViewerSaveButton.IsEnabled = false;
         return true;
     }
 
@@ -292,5 +437,10 @@ public partial class MainWindow : Window
         MtfButton.IsEnabled = true;
         PipelineButton.IsEnabled = true;
         RealImageButton.IsEnabled = true;
+        // Viewer buttons follow the P0-loop state: Open is always available; Run
+        // offset needs a loaded frame; Save needs a processed frame.
+        OpenImageButton.IsEnabled = true;
+        ViewerProcessButton.IsEnabled = _viewerLoaded;
+        ViewerSaveButton.IsEnabled = _viewerProcessed;
     }
 }

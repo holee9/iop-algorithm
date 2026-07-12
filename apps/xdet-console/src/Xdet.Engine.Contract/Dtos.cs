@@ -149,3 +149,78 @@ public sealed record RealImageSanityResult(
                "QUARANTINE 배관/sanity (수치 golden 아님): real images absent — " + edrogiRoot,
                "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, null, null);
 }
+
+// -- Viewer P0 loop DTOs (SPEC-XSEAM-001 feat/xseam-ui-expand) ----------------
+// The usable algorithm-verification loop: open an arbitrary test image -> process
+// it -> view before/after -> save the result. All three DTOs are CLR-only (no
+// pythonnet types) so a future native (C++) engine implements the same contract.
+// Every stat + downsampled preview is computed ENGINE-side; the UI does no DSP
+// and no downsampling (SPEC-VIEWER-001).
+
+/// <summary>
+/// Result of loading an ARBITRARY test image via the seam (Viewer P0 load step).
+/// [HARD] QUARANTINE sanity: a loaded real acquisition is labeled, NEVER a numeric
+/// golden (no tolerance/reference). <see cref="Preview"/> is an engine-downsampled
+/// (~512x512 block-mean) heatmap preview in transport form; on failure (unreadable
+/// file / unresolvable shape) <see cref="Loaded"/> is false, <see cref="Preview"/>
+/// is null, and <see cref="Status"/> carries a clear message (the engine never
+/// throws for a bad path/shape).
+/// </summary>
+public sealed record LoadedFrameInfo(
+    bool Loaded,
+    string Status,
+    string SourceName,
+    int Rows,
+    int Cols,
+    string Dtype,
+    bool Finite,
+    double Min,
+    double Max,
+    double Mean,
+    FrameData? Preview)
+{
+    /// <summary>A clean, non-throwing load-failure verdict.</summary>
+    public static LoadedFrameInfo Failed(string status)
+        => new(false, status, "", 0, 0, "", false, 0.0, 0.0, 0.0, null);
+}
+
+/// <summary>
+/// Result of processing the loaded frame through the golden OFFSET stage (Viewer P0
+/// process step). The stage runs <c>modules.offset.process</c> with a synthetic
+/// OFFSET CalibSet (<c>common.synth_calibset.make_synthetic_calibset</c>, kind via
+/// <c>pipeline.orchestrator.calib_kind_for_stage</c>) carrying a ZERO dark map — no
+/// measured calibration exists for an arbitrary loaded frame, so the golden offset
+/// applies its subtract/clamp/saturation contract without inventing a fitted
+/// correction. All stats + the ~512x512 before/after previews are engine-computed.
+/// On failure <see cref="Processed"/> is false and <see cref="Status"/> explains why.
+/// </summary>
+public sealed record ProcessedFrameInfo(
+    bool Processed,
+    string Status,
+    string[] StagesRun,
+    double OutputMin,
+    double OutputMax,
+    double OutputMean,
+    double MaxAbsChangeFromInput,
+    FrameData? BeforePreview,
+    FrameData? AfterPreview)
+{
+    /// <summary>A clean, non-throwing process-failure verdict.</summary>
+    public static ProcessedFrameInfo Failed(string status)
+        => new(false, status, Array.Empty<string>(), 0.0, 0.0, 0.0, 0.0, null, null);
+}
+
+/// <summary>
+/// Result of saving the processed frame (Viewer P0 save step). The engine FIRST
+/// applies the replicated C-20 write guard (mirror of
+/// <c>apps.gui.io_panel.guard_output_path</c>: refuse any path resolving under
+/// <c>&lt;repo&gt;/data</c>) and only then writes the npz + JSON sidecar
+/// (<c>apps.gui.export.export_frame</c> schema). On a guard rejection
+/// <see cref="GuardRejected"/> is true, <see cref="Success"/> is false, and NOTHING
+/// is written. The seam never throws for a rejected/failed save.
+/// </summary>
+public sealed record SaveResult(
+    bool Success,
+    bool GuardRejected,
+    string Path,
+    string Message);

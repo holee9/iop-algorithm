@@ -14,6 +14,43 @@
         </StatusBar>
 
         <TabControl>
+            <!-- Viewer (P0 usable loop, feat/xseam-ui-expand): open an ARBITRARY
+                 16-bit test image -> run the golden offset -> view before/after ->
+                 save the result. The seam loads/downsamples/processes/exports; the UI
+                 only drives the 3 buttons and renders engine-returned previews (no DSP,
+                 no downsampling — SPEC-VIEWER-001). Loaded real images are QUARANTINE
+                 sanity (labeled, never a numeric golden). Save applies the C-20 write
+                 guard (refuse under <repo>/data) engine-side and never crashes. -->
+            <TabItem Header="Viewer" AutomationProperties.AutomationId="ViewerTab">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                        <Button x:Name="OpenImageButton" AutomationProperties.AutomationId="OpenImageButton"
+                                Content="Open image..."
+                                Click="OpenImageButton_Click" Padding="10,4" />
+                        <Button x:Name="ViewerProcessButton" AutomationProperties.AutomationId="ViewerProcessButton"
+                                Content="Run offset" IsEnabled="False"
+                                Click="ViewerProcessButton_Click" Padding="10,4" Margin="8,0,0,0" />
+                        <Button x:Name="ViewerSaveButton" AutomationProperties.AutomationId="ViewerSaveButton"
+                                Content="Save output..." IsEnabled="False"
+                                Click="ViewerSaveButton_Click" Padding="10,4" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Vertical" Margin="8,0,8,4">
+                        <TextBlock x:Name="ViewerInfo" AutomationProperties.AutomationId="ViewerInfo"
+                                   Text="Open a 16-bit .raw test image to begin." TextWrapping="Wrap" />
+                        <TextBlock x:Name="ViewerStatus" AutomationProperties.AutomationId="ViewerStatus"
+                                   Text="viewer: idle" TextWrapping="Wrap" Margin="0,2,0,0" />
+                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <sp:WpfPlot x:Name="ViewerBeforePlot" Grid.Column="0" />
+                        <sp:WpfPlot x:Name="ViewerAfterPlot" Grid.Column="1" />
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+
             <!-- Offset stage (SWR-101~104): the seam runs the golden offset on a
                  small deterministic synthetic frame; the UI renders the full 2-D
                  input vs corrected frames as ScottPlot heatmaps. No pixel math is

@@ -21,6 +21,13 @@ public sealed class PythonNetXdetEngine : IXdetEngine
     private static readonly object InitGate = new();
     private static bool _initialized;
 
+    // Viewer P0-loop adapter state: the loaded raw frame and the processed output,
+    // held as live golden XFrame handles ACROSS LoadRawFrame -> ProcessLoadedFrame ->
+    // SaveProcessedFrame (the interface methods are stateless in signature). Only
+    // touched under Py.GIL(); replaced (old handle disposed) on each new load/process.
+    private PyObject? _loadedFrame;
+    private PyObject? _processedFrame;
+
     public PythonNetXdetEngine() => EnsureInitialized();
 
     // -- interpreter bootstrap (verbatim probe config) ------------------------
@@ -256,6 +263,341 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    // -- Viewer P0 loop: open arbitrary image -> process -> save --------------
+
+    public LoadedFrameInfo LoadRawFrame(string path, int rows = 0, int cols = 0)
+    {
+        EnsureInitialized();
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return LoadedFrameInfo.Failed("load error: file not found — " + (path ?? "(null)"));
+
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic builtins = Py.Import("builtins");
+            dynamic xframe = Py.Import("common.xframe");
+
+            string name = Path.GetFileName(path);
+            // common.io sidecar convention: <name>.raw + <name>.json.
+            string sidecar = Path.ChangeExtension(path, ".json");
+
+            dynamic frame;
+            int r;
+            int c;
+            try
+            {
+                if (File.Exists(sidecar))
+                {
+                    // Golden loader: raw16 + JSON sidecar ('resolution' required).
+                    dynamic io = Py.Import("common.io");
+                    frame = io.load_raw_frame(path);
+                    PyObject shape = (PyObject)frame.pixel.shape;
+                    r = ((PyObject)shape[0]).As<int>();
+                    c = ((PyObject)shape[1]).As<int>();
+                }
+                else
+                {
+                    // No sidecar: infer the shape from the payload size (uint16).
+                    dynamic raw = np.fromfile(path, "<u2");
+                    long n = ((PyObject)raw.size).As<long>();
+                    if (!TryInferShape(n, rows, cols, out r, out c))
+                        return LoadedFrameInfo.Failed(
+                            $"load error: cannot resolve shape for {name} ({n} uint16 pixels); "
+                            + "pass rows/cols or provide a <name>.json sidecar with 'resolution'");
+                    dynamic pix = raw.reshape(r, c).astype(np.float32);
+                    frame = xframe.new_frame(pix);
+                }
+            }
+            catch (Exception ex)
+            {
+                return LoadedFrameInfo.Failed("load error: " + ex.Message);
+            }
+
+            // Adopt as adapter state (dispose the prior loaded/processed handles).
+            _processedFrame?.Dispose();
+            _processedFrame = null;
+            _loadedFrame?.Dispose();
+            _loadedFrame = (PyObject)frame;
+
+            // Engine-side stats + ~512x512 preview (the UI does no DSP).
+            PyObject pixObj = (PyObject)frame.pixel;
+            string dtype = ((PyObject)frame.pixel.dtype.name).As<string>();
+            bool finite = ItemAsBool(np.all(np.isfinite(pixObj)));
+            double min = ItemAsDouble(np.min(pixObj));
+            double max = ItemAsDouble(np.max(pixObj));
+            double mean = ItemAsDouble(np.mean(pixObj));
+            FrameData preview = DownsamplePreview(pixObj, np, builtins, 512);
+
+            string status =
+                $"QUARANTINE 배관/sanity (수치 golden 아님): loaded {name} "
+                + $"[{r}x{c}, dtype {dtype}, finite={finite}]";
+            return new LoadedFrameInfo(true, status, name, r, c, dtype, finite, min, max, mean, preview);
+        }
+    }
+
+    public ProcessedFrameInfo ProcessLoadedFrame()
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            if (_loadedFrame is null)
+                return ProcessedFrameInfo.Failed("process error: load a frame first");
+
+            dynamic np = Py.Import("numpy");
+            dynamic builtins = Py.Import("builtins");
+            dynamic dataclasses = Py.Import("dataclasses");
+            dynamic synth = Py.Import("common.synth_calibset");
+            dynamic orchestrator = Py.Import("pipeline.orchestrator");
+            dynamic offset = Py.Import("modules.offset");
+
+            try
+            {
+                dynamic loaded = _loadedFrame;
+                PyObject shapeObj = (PyObject)loaded.pixel.shape;
+                int r = ((PyObject)shapeObj[0]).As<int>();
+                int c = ((PyObject)shapeObj[1]).As<int>();
+
+                // Blueprint CalibSet: make_synthetic_calibset(shape, OFFSET-kind). The
+                // factory yields an EMPTY payload; offset.process REQUIRES an O_map, so
+                // replace the payload with a synthetic ZERO dark — no measured
+                // calibration exists for an arbitrary loaded frame, and a zero dark runs
+                // the golden offset's subtract/clamp/saturation contract without
+                // inventing a fitted correction (SWR-000-5: no silent default).
+                dynamic kind = orchestrator.calib_kind_for_stage("offset");
+                using var shapeTuple = new PyTuple(new PyObject[] { new PyInt(r), new PyInt(c) });
+                dynamic calib0 = synth.make_synthetic_calibset(shapeTuple, kind);
+                PyObject zeros = (PyObject)np.zeros(shapeTuple, np.float32);
+                using var dataDict = new PyDict();
+                dataDict["O_map"] = zeros;
+                PyObject replaceFunc = (PyObject)dataclasses.replace;
+                using var replaceKwargs = new PyDict();
+                replaceKwargs["data"] = dataDict;
+                dynamic calib = replaceFunc.Invoke(new[] { (PyObject)calib0 }, replaceKwargs);
+                calib.validate();
+
+                PyObject paramsObj = BuildOffsetParams(new OffsetParams(0.98 * 65535.0));
+                dynamic outFrame = offset.process(loaded, calib, paramsObj);
+
+                _processedFrame?.Dispose();
+                _processedFrame = (PyObject)outFrame;
+
+                PyObject outPix = (PyObject)outFrame.pixel;
+                PyObject inPix = (PyObject)loaded.pixel;
+                double outMin = ItemAsDouble(np.min(outPix));
+                double outMax = ItemAsDouble(np.max(outPix));
+                double outMean = ItemAsDouble(np.mean(outPix));
+                dynamic diffAbs = np.abs(np.subtract(np.asarray(outPix, np.float64), np.asarray(inPix, np.float64)));
+                double maxAbsChange = ItemAsDouble(np.max(diffAbs));
+                string[] stages = StagesFromHistory(outFrame);
+
+                FrameData before = DownsamplePreview(inPix, np, builtins, 512);
+                FrameData after = DownsamplePreview(outPix, np, builtins, 512);
+
+                string status =
+                    $"QUARANTINE 배관/sanity (수치 golden 아님): offset EXECUTED on {r}x{c} frame "
+                    + $"(synthetic zero dark); stages={string.Join("->", stages)}, max|delta|={maxAbsChange:G4}";
+                return new ProcessedFrameInfo(
+                    true, status, stages, outMin, outMax, outMean, maxAbsChange, before, after);
+            }
+            catch (Exception ex)
+            {
+                return ProcessedFrameInfo.Failed("process error: " + ex.Message);
+            }
+        }
+    }
+
+    public SaveResult SaveProcessedFrame(string outputPath)
+    {
+        EnsureInitialized();
+        if (string.IsNullOrWhiteSpace(outputPath))
+            return new SaveResult(false, false, "", "save error: empty output path");
+
+        using (Py.GIL())
+        {
+            if (_processedFrame is null)
+                return new SaveResult(false, false, outputPath, "save error: process a frame first");
+
+            try
+            {
+                dynamic np = Py.Import("numpy");
+                dynamic json = Py.Import("json");
+                dynamic pathlib = Py.Import("pathlib");
+                dynamic builtins = Py.Import("builtins");
+
+                string repoRoot = FindRepoRoot();
+
+                // -- C-20 guard: replicate apps.gui.io_panel.guard_output_path Python-side
+                //    (do NOT import apps.gui). Refuse any path resolving under <repo>/data,
+                //    checked BEFORE any file is written.
+                dynamic resolvedP = pathlib.Path(outputPath).resolve();
+                dynamic protectedP = pathlib.Path(Path.Combine(repoRoot, "data")).resolve();
+                string resolvedStr = resolvedP.ToString() ?? outputPath;
+                bool underData = true;
+                try { resolvedP.relative_to(protectedP); }
+                catch (PythonException) { underData = false; }
+                if (underData)
+                    return new SaveResult(false, true, resolvedStr,
+                        $"C-20 guard: refusing to write under the protected data root '{protectedP}': {resolvedStr}");
+
+                // -- export.py schema: <base>.npz (pixel f32 + masks u8) + <base>.json
+                //    (noise / validation_mode / history / array_keys). Base = the dialog
+                //    path with a trailing '.npz' stripped so the written npz IS the named file.
+                string basePath = outputPath;
+                if (basePath.EndsWith(".npz", StringComparison.OrdinalIgnoreCase))
+                    basePath = basePath[..^4];
+                string npzPath = basePath + ".npz";
+                string jsonPath = basePath + ".json";
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(npzPath)) ?? ".");
+
+                dynamic frame = _processedFrame;
+                PyObject pixelObj = (PyObject)np.asarray(frame.pixel, np.float32);
+                PyObject masksObj = (PyObject)np.asarray(frame.masks, np.uint8);
+
+                PyObject savez = (PyObject)np.savez;
+                using var savezKwargs = new PyDict();
+                savezKwargs["pixel"] = pixelObj;
+                savezKwargs["masks"] = masksObj;
+                using (var pyNpz = new PyString(npzPath))
+                    savez.Invoke(new[] { (PyObject)pyNpz }, savezKwargs).Dispose();
+
+                // JSON sidecar (export.py schema), built engine-side from the golden frame.
+                using var meta = new PyDict();
+                using (var noiseDict = new PyDict())
+                {
+                    noiseDict["alpha"] = (PyObject)frame.noise.alpha;
+                    noiseDict["sigma"] = (PyObject)frame.noise.sigma;
+                    meta["noise"] = noiseDict;
+                }
+                meta["validation_mode"] = (PyObject)frame.validation_mode;
+
+                PyObject historyObj = (PyObject)frame.history;
+                long hn = historyObj.Length();
+                using var histList = new PyList();
+                for (int i = 0; i < hn; i++)
+                {
+                    using PyObject entry = historyObj[i];
+                    using var d = new PyDict();
+                    d["module_name"] = entry.GetAttr("module_name");
+                    d["module_version"] = entry.GetAttr("module_version");
+                    d["params_hash"] = entry.GetAttr("params_hash");
+                    d["calibset_id"] = entry.GetAttr("calibset_id");
+                    // extra is a frozen mappingproxy on the golden HistoryEntry; convert
+                    // to a plain dict (as export.py does: dict(entry.extra)) so json.dumps
+                    // accepts it — a mappingproxy is not JSON-serializable.
+                    using PyObject extraObj = entry.GetAttr("extra");
+                    d["extra"] = extraObj.IsNone() ? extraObj : (PyObject)builtins.dict(extraObj);
+                    histList.Append(d);
+                }
+                meta["history"] = histList;
+                using (var keys = new PyList())
+                {
+                    keys.Append(new PyString("pixel"));
+                    keys.Append(new PyString("masks"));
+                    meta["array_keys"] = keys;
+                }
+
+                PyObject dumps = (PyObject)json.dumps;
+                using var dumpsKwargs = new PyDict();
+                using (var ind = new PyInt(2)) dumpsKwargs["indent"] = ind;
+                using PyObject jsonStr = dumps.Invoke(new[] { (PyObject)meta }, dumpsKwargs);
+                File.WriteAllText(jsonPath, jsonStr.As<string>());
+
+                return new SaveResult(true, false, npzPath,
+                    $"wrote {Path.GetFileName(npzPath)} (+ {Path.GetFileName(jsonPath)})");
+            }
+            catch (Exception ex)
+            {
+                return new SaveResult(false, false, outputPath, "save error: " + ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic (concrete-only, like <see cref="MakeSlantedEdge"/>): the FULL
+    /// processed frame currently held as adapter state, marshaled to a CLR transport
+    /// frame via the fast bulk path. Used by the round-trip proof to compare the saved
+    /// file against the in-memory golden output. The UI never calls this (it uses the
+    /// ~512x512 previews); a full-res marshal is a test-only convenience.
+    /// </summary>
+    public FrameData GetProcessedFrame()
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            if (_processedFrame is null)
+                throw new InvalidOperationException("no processed frame — call ProcessLoadedFrame first");
+            dynamic np = Py.Import("numpy");
+            return FrameFromXFrameFast((dynamic)_processedFrame, np);
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic (concrete-only): reload a frame previously written by
+    /// <see cref="SaveProcessedFrame"/> (npz pixel/masks + JSON noise sidecar) into a
+    /// CLR transport frame, proving the export round-trips. Mirrors the base-name
+    /// resolution SaveProcessedFrame uses (a trailing '.npz' is stripped, then
+    /// '.npz'/'.json' re-appended).
+    /// </summary>
+    public FrameData LoadExportedFrame(string outputPath)
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic json = Py.Import("json");
+
+            string basePath = outputPath;
+            if (basePath.EndsWith(".npz", StringComparison.OrdinalIgnoreCase))
+                basePath = basePath[..^4];
+            string npzPath = basePath + ".npz";
+            string jsonPath = basePath + ".json";
+
+            dynamic npz = np.load(npzPath);
+            try
+            {
+                PyObject pixel = (PyObject)npz["pixel"];
+                PyObject masks = (PyObject)npz["masks"];
+                float[] pixels = NumpyToFloatArrayFast(pixel, np);
+                byte[] maskBytes = NumpyToByteArrayFast(masks, np);
+                PyObject shape = (PyObject)((dynamic)pixel).shape;
+                int r = ((PyObject)shape[0]).As<int>();
+                int c = ((PyObject)shape[1]).As<int>();
+
+                dynamic meta = json.loads(File.ReadAllText(jsonPath));
+                double alpha = ((PyObject)meta["noise"]["alpha"]).As<double>();
+                double sigma = ((PyObject)meta["noise"]["sigma"]).As<double>();
+                return new FrameData(pixels, r, c, maskBytes, alpha, sigma);
+            }
+            finally
+            {
+                try { ((dynamic)npz).close(); } catch { /* best-effort NpzFile close */ }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resolve a raw payload's (rows, cols) from its uint16 element count: use an
+    /// explicit (rows, cols) when it matches, else a perfect square (edrogi 3072x3072),
+    /// else 3072x2560. Returns false when none matches (the caller emits a clean error).
+    /// </summary>
+    private static bool TryInferShape(long n, int rows, int cols, out int r, out int c)
+    {
+        if (rows > 0 && cols > 0 && (long)rows * cols == n)
+        {
+            r = rows; c = cols; return true;
+        }
+        long root = (long)Math.Round(Math.Sqrt(n));
+        if (root > 0 && root * root == n)
+        {
+            r = (int)root; c = (int)root; return true;
+        }
+        if (n == 3072L * 2560L)
+        {
+            r = 3072; c = 2560; return true;
+        }
+        r = 0; c = 0; return false;
+    }
+
     /// <summary>
     /// Engine-side block-mean downsample of a full-res frame to about
     /// <paramref name="target"/> x <paramref name="target"/> for a display-only heatmap
@@ -315,6 +657,46 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         {
             try { File.Delete(tmp); } catch { /* best-effort scratch cleanup */ }
         }
+    }
+
+    /// <summary>
+    /// Bulk uint8 marshal (masks) via a numpy <c>tofile</c> scratch buffer — the byte
+    /// twin of <see cref="NumpyToFloatArrayFast"/>. A full-res masks array has ~9.4M
+    /// elements, so the per-element <c>.item()</c> loop in <see cref="NumpyToByteArray"/>
+    /// would be prohibitively slow; uint8 <c>tofile</c> writes the raw bytes 1:1 and C#
+    /// reads them straight back (no conversion).
+    /// </summary>
+    private static byte[] NumpyToByteArrayFast(PyObject arr, dynamic np)
+    {
+        dynamic contiguous = np.ascontiguousarray(arr, np.uint8);
+        string tmp = Path.Combine(Path.GetTempPath(), "xdet_masks_" + Guid.NewGuid().ToString("N") + ".u8");
+        try
+        {
+            contiguous.tofile(tmp);
+            return File.ReadAllBytes(tmp);
+        }
+        finally
+        {
+            try { File.Delete(tmp); } catch { /* best-effort scratch cleanup */ }
+        }
+    }
+
+    /// <summary>
+    /// Marshal a golden XFrame to a CLR <see cref="FrameData"/> via the fast bulk
+    /// paths (float32 pixels + uint8 masks). Used for full-res frames where the
+    /// per-element <see cref="FrameFromXFrame"/> would be too slow.
+    /// </summary>
+    private static FrameData FrameFromXFrameFast(dynamic frame, dynamic np)
+    {
+        float[] pixels = NumpyToFloatArrayFast((PyObject)frame.pixel, np);
+        byte[] masks = NumpyToByteArrayFast((PyObject)frame.masks, np);
+        PyObject noise = (PyObject)frame.noise;
+        double alpha = noise.GetAttr("alpha").As<double>();
+        double sigma = noise.GetAttr("sigma").As<double>();
+        PyObject shape = (PyObject)frame.pixel.shape;
+        int rows = ((PyObject)shape[0]).As<int>();
+        int cols = ((PyObject)shape[1]).As<int>();
+        return new FrameData(pixels, rows, cols, masks, alpha, sigma);
     }
 
     private static bool ItemAsBool(dynamic numpyScalar)

@@ -40,6 +40,20 @@ internal static class Program
             return 3;
         }
 
+        // Viewer P0-loop file paths, injected into the app via env presets
+        // (XDET_VIEWER_OPEN_PATH / XDET_VIEWER_SAVE_PATH) BEFORE launch so the child
+        // inherits them. The app then bypasses the native Open/Save dialogs and uses
+        // these paths directly — a DELIBERATE decision: automating the native Win32
+        // file dialogs through UIA is unreliable/non-deterministic, so we drive the
+        // full Load->Process->Save flow deterministically (and still capture the three
+        // viewer screenshots). The real native dialogs remain in place for end users.
+        string repoRoot = RepoRoot();
+        string viewerOpenPath = Path.Combine(repoRoot, "images", "에드로지16BIT", "16bit cal", "MasterDark.raw");
+        string viewerSavePath = Path.Combine(Path.GetTempPath(),
+            "xdet_viewer_smoke_" + Guid.NewGuid().ToString("N") + ".npz");
+        Environment.SetEnvironmentVariable("XDET_VIEWER_OPEN_PATH", viewerOpenPath);
+        Environment.SetEnvironmentVariable("XDET_VIEWER_SAVE_PATH", viewerSavePath);
+
         Application? app = null;
         UIA3Automation? automation = null;
         try
@@ -87,8 +101,13 @@ internal static class Program
             bool realImage = RunTab(window, cf, "REALIMAGE", "RealImageTab", "RealImageButton", "RealImageInfo",
                 "real image error", RealImageTimeoutSec, Path.Combine(screensDir, "realimage.png"));
 
+            // 3) Drive the Viewer P0 loop end-to-end: Open image -> Run offset -> Save
+            //    output, capturing a screenshot after each step and asserting the saved
+            //    npz exists. File paths are injected via the env presets set above.
+            bool viewer = RunViewer(window, cf, screensDir, viewerOpenPath, viewerSavePath);
+
             Console.WriteLine();
-            bool all = offset && mtf && pipeline && realImage;
+            bool all = offset && mtf && pipeline && realImage && viewer;
             Console.WriteLine("=== RESULT: " + (all ? "ALL PASS" : "FAIL") + " ===");
             return all ? 0 : 1;
         }
@@ -183,6 +202,121 @@ internal static class Program
             Console.WriteLine($"{label}: FAIL exception {ex.GetType().Name}: {ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Drive the Viewer P0 loop end-to-end (feat/xseam-ui-expand): select the Viewer
+    /// tab, then Open image... -> Run offset -> Save output..., capturing a screenshot
+    /// (viewer_loaded / viewer_processed / viewer_saved) after each step and asserting
+    /// the saved npz exists. The Open/Save file paths are injected via env presets
+    /// (set in Main before launch), so the native dialogs are bypassed and the full
+    /// flow is deterministic. Skips cleanly (PASS) when the edrogi sample is absent.
+    /// </summary>
+    private static bool RunViewer(
+        Window window, ConditionFactory cf, string screensDir, string openPath, string savePath)
+    {
+        Console.WriteLine();
+        Console.WriteLine("VIEWER: P0 loop (open -> run offset -> save)");
+        if (!File.Exists(openPath))
+        {
+            Console.WriteLine("VIEWER: SKIP — edrogi sample absent: " + openPath);
+            return true;   // clean skip when images are absent (matches the xUnit suite)
+        }
+        Console.WriteLine("VIEWER: open preset = " + openPath);
+        Console.WriteLine("VIEWER: save preset = " + savePath);
+        Console.WriteLine("VIEWER: file dialogs bypassed via env presets "
+            + "(XDET_VIEWER_OPEN_PATH / XDET_VIEWER_SAVE_PATH) for a deterministic flow.");
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId("ViewerTab"));
+            if (tab is null) { Console.WriteLine("VIEWER: FAIL tab 'ViewerTab' not found"); return false; }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);
+
+            // 1) Open image... (preset path). The real edrogi 3072² raw loads, so use
+            //    the generous budget. Wait until ViewerStatus reports "loaded".
+            if (!ClickAndWait(window, cf, "OpenImageButton", "ViewerStatus", "loaded",
+                    RealImageTimeoutSec, "VIEWER/open")) return false;
+            Thread.Sleep(TabRealizeMs);
+            CaptureWindow(window, Path.Combine(screensDir, "viewer_loaded.png"));
+
+            // 2) Run offset (golden offset on the 3072² frame). Wait until "processed".
+            if (!ClickAndWait(window, cf, "ViewerProcessButton", "ViewerStatus", "processed",
+                    RealImageTimeoutSec, "VIEWER/process")) return false;
+            Thread.Sleep(TabRealizeMs);
+            CaptureWindow(window, Path.Combine(screensDir, "viewer_processed.png"));
+
+            // 3) Save output... (preset path, outside data/). Wait until "saved".
+            if (!ClickAndWait(window, cf, "ViewerSaveButton", "ViewerStatus", "saved",
+                    ActionTimeoutSec, "VIEWER/save")) return false;
+            Thread.Sleep(TabRealizeMs);
+            CaptureWindow(window, Path.Combine(screensDir, "viewer_saved.png"));
+
+            // Assert the saved npz exists (SaveProcessedFrame writes exactly the preset
+            // path: a trailing '.npz' is stripped then re-appended -> 'foo.npz').
+            if (!File.Exists(savePath))
+            {
+                Console.WriteLine("VIEWER: FAIL saved npz not found: " + savePath);
+                return false;
+            }
+            long size = new FileInfo(savePath).Length;
+            Console.WriteLine($"VIEWER: PASS saved npz exists: {savePath} ({size} bytes)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"VIEWER: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Click the button <paramref name="buttonId"/> and poll the TextBlock
+    /// <paramref name="watchId"/> until its text contains <paramref name="successToken"/>
+    /// (PASS) or an error/failed/refused token (FAIL). Case-insensitive.
+    /// </summary>
+    private static bool ClickAndWait(
+        Window window, ConditionFactory cf,
+        string buttonId, string watchId, string successToken, int timeoutSec, string label)
+    {
+        var button = window.FindFirstDescendant(cf.ByAutomationId(buttonId));
+        if (button is null)
+        {
+            Console.WriteLine($"{label}: FAIL button '{buttonId}' not found");
+            return false;
+        }
+        button.AsButton().Invoke();
+
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < timeoutSec)
+        {
+            string watch = ReadText(window, cf, watchId);
+            if (watch.Contains(successToken, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"{label}: PASS {watch}");
+                return true;
+            }
+            if (watch.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                watch.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+                watch.Contains("refused", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"{label}: FAIL {watch}");
+                return false;
+            }
+            Thread.Sleep(PollMs);
+        }
+        Console.WriteLine($"{label}: FAIL timeout after {timeoutSec}s "
+                          + $"(watch: \"{ReadText(window, cf, watchId)}\")");
+        return false;
+    }
+
+    /// <summary>Walk up from this runner's base dir to the repo root (pyproject.toml).</summary>
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pyproject.toml")))
+            dir = dir.Parent;
+        return dir?.FullName ?? AppContext.BaseDirectory;
     }
 
     /// <summary>
