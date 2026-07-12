@@ -54,6 +54,30 @@ public interface IXdetEngine
     /// </summary>
     RealImageSanityResult RunRealImageOffsetSanity();
 
+    /// <summary>
+    /// [HARD] QUARANTINE plumbing/sanity ONLY (SPEC-REALDATA-001). Run the golden
+    /// OFFSET / GAIN / DEFECT stage (<paramref name="kind"/> ∈ {"offset","gain","defect"})
+    /// on the REAL edrogi 아크릴 acquisition frame using the REAL CalibSet built from the
+    /// registered calibration source — mirroring <c>tests/test_tc_realdata_arms.py</c>
+    /// (<c>test_tc_001/002/003</c>) EXACTLY:
+    /// <list type="bullet">
+    ///   <item>signal := first non-<c>_result</c> raw under <c>아크릴</c> (via <c>_load_full</c>);</item>
+    ///   <item>offset: <c>build_offset_calibset(_load_full("16bit cal/MasterDark.raw"))</c> -&gt; <c>modules.offset.process</c>;</item>
+    ///   <item>gain:   <c>build_gain_calibset(_load_full("16bit cal/CalSet_19008.raw"))</c> -&gt; <c>modules.gain.process</c>;</item>
+    ///   <item>defect: <c>build_defect_calibset(_load_full("16bit cal/BPM.raw"))</c> -&gt; <c>modules.defect.process</c>;</item>
+    /// </list>
+    /// each with <c>tests.modules.phantoms.corrections.corr_params()</c>. Because the
+    /// calib is REAL, the correction is MEANINGFUL (output differs from input,
+    /// <see cref="RegisteredArmResult.MaxAbsChangeFromInput"/> &gt; 0) — unlike the synthetic
+    /// zero-dark no-op. Returns the sanity verdict (shape/dtype/finite/std) + engine-computed
+    /// stats (min/max/mean + max|delta|) + engine-downsampled ~512x512 before/after previews.
+    /// The corrected output is ALSO held as adapter state so <see cref="SaveProcessedFrame"/>
+    /// can persist it (C-20 guard intact). When the sample tree is absent, returns a result
+    /// with <see cref="RegisteredArmResult.ImagesPresent"/> == false (no exception). All DSP +
+    /// downsampling happen engine-side (SPEC-VIEWER-001). NON-AUTHORITATIVE — never a numeric golden.
+    /// </summary>
+    RegisteredArmResult RunRegisteredArm(string kind);
+
     // -- Viewer P0 loop: open arbitrary image -> process -> save (usable) ------
     // The adapter holds the loaded / processed frame as state ACROSS these three
     // calls (LoadRawFrame sets it, ProcessLoadedFrame consumes+updates it,

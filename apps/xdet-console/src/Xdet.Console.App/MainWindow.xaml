@@ -14,29 +14,49 @@
         </StatusBar>
 
         <TabControl>
-            <!-- Viewer (P0 usable loop, feat/xseam-ui-expand): open an ARBITRARY
-                 16-bit test image -> run the golden offset -> view before/after ->
-                 save the result. The seam loads/downsamples/processes/exports; the UI
-                 only drives the 3 buttons and renders engine-returned previews (no DSP,
-                 no downsampling — SPEC-VIEWER-001). Loaded real images are QUARANTINE
-                 sanity (labeled, never a numeric golden). Save applies the C-20 write
-                 guard (refuse under <repo>/data) engine-side and never crashes. -->
+            <!-- Viewer (feat/xseam-ui-expand): the PRIMARY flow is the REGISTERED edrogi
+                 test set. Pick an arm (Offset/MasterDark, Gain/CalSet_19008, Defect/BPM)
+                 and run it: the seam runs the golden stage on the REAL 아크릴 3072x3072
+                 acquisition with the REAL CalibSet (mirroring the frozen Python realdata
+                 arms) -> engine-computed sanity + stats (incl. max|delta|, proving the REAL
+                 correction) + engine-downsampled before/after previews. QUARANTINE sanity
+                 (labeled, never a numeric golden). Save applies the C-20 write guard
+                 engine-side. The arbitrary "Open image..." path is retained as SECONDARY.
+                 The UI does no DSP and no downsampling (SPEC-VIEWER-001). -->
             <TabItem Header="Viewer" AutomationProperties.AutomationId="ViewerTab">
                 <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                    <!-- PRIMARY: registered edrogi test set (real signal + real calib). -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,8,8,2">
+                        <TextBlock Text="Registered test set:" VerticalAlignment="Center"
+                                   FontWeight="Bold" Margin="0,0,8,0" />
+                        <ComboBox x:Name="ArmSelector" AutomationProperties.AutomationId="ArmSelector"
+                                  Width="200" SelectedIndex="0" VerticalContentAlignment="Center">
+                            <ComboBoxItem Tag="offset" Content="Offset (MasterDark)" />
+                            <ComboBoxItem Tag="gain" Content="Gain (CalSet_19008)" />
+                            <ComboBoxItem Tag="defect" Content="Defect (BPM)" />
+                        </ComboBox>
+                        <Button x:Name="RunRegisteredArmButton" AutomationProperties.AutomationId="RunRegisteredArmButton"
+                                Content="Run registered arm"
+                                Click="RunRegisteredArmButton_Click" Padding="10,4" Margin="8,0,0,0" />
+                        <Button x:Name="ViewerSaveButton" AutomationProperties.AutomationId="ViewerSaveButton"
+                                Content="Save output..." IsEnabled="False"
+                                Click="ViewerSaveButton_Click" Padding="10,4" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <!-- SECONDARY: arbitrary browse -> golden offset (synthetic zero dark). -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,6">
+                        <TextBlock Text="Arbitrary image:" VerticalAlignment="Center"
+                                   Foreground="Gray" Margin="0,0,8,0" />
                         <Button x:Name="OpenImageButton" AutomationProperties.AutomationId="OpenImageButton"
                                 Content="Open image..."
                                 Click="OpenImageButton_Click" Padding="10,4" />
                         <Button x:Name="ViewerProcessButton" AutomationProperties.AutomationId="ViewerProcessButton"
                                 Content="Run offset" IsEnabled="False"
                                 Click="ViewerProcessButton_Click" Padding="10,4" Margin="8,0,0,0" />
-                        <Button x:Name="ViewerSaveButton" AutomationProperties.AutomationId="ViewerSaveButton"
-                                Content="Save output..." IsEnabled="False"
-                                Click="ViewerSaveButton_Click" Padding="10,4" Margin="8,0,0,0" />
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Vertical" Margin="8,0,8,4">
                         <TextBlock x:Name="ViewerInfo" AutomationProperties.AutomationId="ViewerInfo"
-                                   Text="Open a 16-bit .raw test image to begin." TextWrapping="Wrap" />
+                                   Text="Pick a registered arm and click 'Run registered arm' (or open an arbitrary image)."
+                                   TextWrapping="Wrap" />
                         <TextBlock x:Name="ViewerStatus" AutomationProperties.AutomationId="ViewerStatus"
                                    Text="viewer: idle" TextWrapping="Wrap" Margin="0,2,0,0" />
                     </StackPanel>

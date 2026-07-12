@@ -263,6 +263,149 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    /// <summary>
+    /// [HARD] QUARANTINE plumbing/sanity ONLY. Registered-arm generalization of
+    /// <see cref="RunRealImageOffsetSanity"/> across OFFSET / GAIN / DEFECT, mirroring
+    /// <c>tests/test_tc_realdata_arms.py::test_tc_001/002/003</c> EXACTLY: the same real
+    /// 아크릴 signal, the REAL CalibSet built from the registered source
+    /// (MasterDark / CalSet_19008 / BPM via <c>build_offset/gain/defect_calibset</c>), and
+    /// the corresponding <c>modules.{offset,gain,defect}.process(signal, calib, corr_params())</c>.
+    /// Nothing is fitted, tuned, or treated as a numeric golden. Because the calib is REAL the
+    /// correction is MEANINGFUL (max|output-input| &gt; 0). The corrected output is held as
+    /// adapter state (<c>_processedFrame</c>) so <see cref="SaveProcessedFrame"/> can persist it.
+    /// All stats + downsampled before/after previews are engine-side (SPEC-VIEWER-001).
+    /// </summary>
+    public RegisteredArmResult RunRegisteredArm(string kind)
+    {
+        EnsureInitialized();
+
+        // Map kind -> (registered calib source, golden builder attr, golden module).
+        // The gain source name comes from ing.REPRESENTATIVE_CALSET so it stays in lockstep
+        // with the frozen arm (test_tc_002 uses f"{ing.REPRESENTATIVE_CALSET}.raw").
+        string k = (kind ?? "").Trim().ToLowerInvariant();
+        if (k != "offset" && k != "gain" && k != "defect")
+            return RegisteredArmResult.Failed(kind ?? "(null)", "",
+                "QUARANTINE 배관/sanity (수치 golden 아님): unknown arm kind '" + (kind ?? "(null)")
+                + "' (expected offset|gain|defect)");
+
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic builtins = Py.Import("builtins");
+            dynamic pathlib = Py.Import("pathlib");
+            dynamic ing = Py.Import("scripts.ingest_edrogi");
+            dynamic corrections = Py.Import("tests.modules.phantoms.corrections");
+
+            // Registered calib source name + the golden module/builder for this arm.
+            string calibName;
+            dynamic module;
+            Func<dynamic, dynamic> buildCalib;
+            switch (k)
+            {
+                case "offset":
+                    calibName = "MasterDark.raw";
+                    module = Py.Import("modules.offset");
+                    buildCalib = frame => ing.build_offset_calibset(frame);
+                    break;
+                case "gain":
+                    calibName = ((PyObject)ing.REPRESENTATIVE_CALSET).As<string>() + ".raw";
+                    module = Py.Import("modules.gain");
+                    buildCalib = frame => ing.build_gain_calibset(frame);
+                    break;
+                default: // "defect"
+                    calibName = "BPM.raw";
+                    module = Py.Import("modules.defect");
+                    buildCalib = frame => ing.build_defect_calibset(frame);
+                    break;
+            }
+
+            // Absolute edrogi root (CWD-independent), reusing edrogi_available verbatim.
+            string edrogiRoot = Path.Combine(FindRepoRoot(), "images", "에드로지16BIT");
+            bool available = ((PyObject)ing.edrogi_available(edrogiRoot)).As<bool>();
+            if (!available)
+                return RegisteredArmResult.Absent(k, calibName, edrogiRoot);
+            ing.require_edrogi(edrogiRoot);
+
+            // signal := first non-"_result" raw under 아크릴 (mirror of the arm's _first_raw:
+            // sorted(rglob("*.raw")), skip vendor "_result.raw" outputs).
+            dynamic acrylicDir = pathlib.Path(Path.Combine(edrogiRoot, "아크릴"));
+            PyObject sortedRaws = (PyObject)builtins.sorted(acrylicDir.rglob("*.raw"));
+            string signalFull = "";
+            string signalName = "";
+            long nRaw = sortedRaws.Length();
+            for (long i = 0; i < nRaw; i++)
+            {
+                using PyObject p = sortedRaws[(int)i];
+                string name = ((PyObject)p.GetAttr("name")).As<string>();
+                if (!name.EndsWith("_result.raw", StringComparison.Ordinal))
+                {
+                    signalFull = p.ToString() ?? "";
+                    signalName = name;
+                    break;
+                }
+            }
+            if (signalFull.Length == 0)
+                return RegisteredArmResult.Failed(k, calibName,
+                    "QUARANTINE 배관/sanity (수치 golden 아님): no signal raw under 아크릴");
+
+            try
+            {
+                // Load signal + registered calib source EXACTLY as the arm does (_load_full),
+                // build the REAL CalibSet, then run the golden stage with corr_params().
+                dynamic signal = ing._load_full(pathlib.Path(signalFull));
+                string calibFull = Path.Combine(edrogiRoot, "16bit cal", calibName);
+                dynamic calibSource = ing._load_full(pathlib.Path(calibFull));
+                dynamic calib = buildCalib(calibSource);
+                dynamic corrParams = corrections.corr_params();
+                dynamic outFrame = module.process(signal, calib, corrParams);
+
+                // Sanity verdict (_assert_sane), engine-side over the golden output.
+                PyObject outPix = (PyObject)outFrame.pixel;
+                PyObject inPix = (PyObject)signal.pixel;
+                PyObject shape = (PyObject)outFrame.pixel.shape;
+                int rows = ((PyObject)shape[0]).As<int>();
+                int cols = ((PyObject)shape[1]).As<int>();
+                string dtype = ((PyObject)outFrame.pixel.dtype.name).As<string>();
+                bool finite = ItemAsBool(np.all(np.isfinite(outPix)));
+                double std = ItemAsDouble(np.std(outPix));
+                double min = ItemAsDouble(np.min(outPix));
+                double max = ItemAsDouble(np.max(outPix));
+                double mean = ItemAsDouble(np.mean(outPix));
+                bool sane = rows == 3072 && cols == 3072 && dtype == "float32" && finite && std > 0.0;
+
+                // Engine-computed proof the REAL calib actually changed the frame.
+                dynamic diffAbs = np.abs(np.subtract(np.asarray(outPix, np.float64), np.asarray(inPix, np.float64)));
+                double maxAbsChange = ItemAsDouble(np.max(diffAbs));
+
+                // Hold the corrected output as adapter state so Save persists it (C-20 intact).
+                _processedFrame?.Dispose();
+                _processedFrame = (PyObject)outFrame;
+                _loadedFrame?.Dispose();
+                _loadedFrame = null;
+
+                // Engine-side ~512x512 block-mean before/after previews (UI does no DSP).
+                FrameData before = DownsamplePreview(inPix, np, builtins, 512);
+                FrameData after = DownsamplePreview(outPix, np, builtins, 512);
+
+                string status = sane
+                    ? $"QUARANTINE 배관/sanity (수치 golden 아님): {k} EXECUTED on real {rows}x{cols} frame "
+                      + $"with REAL calib {calibName}; finite={finite}, std={std:G4} (>0), "
+                      + $"dtype={dtype}, max|delta|={maxAbsChange:G4} (>0 = real correction)"
+                    : $"QUARANTINE 배관/sanity (수치 golden 아님): {k} SANITY FAILED "
+                      + $"(shape={rows}x{cols}, dtype={dtype}, finite={finite}, std={std:G4})";
+
+                return new RegisteredArmResult(
+                    k, calibName, true, sane, status, signalName, rows, cols, dtype, finite, std,
+                    min, max, mean, maxAbsChange, before, after);
+            }
+            catch (Exception ex)
+            {
+                return RegisteredArmResult.Failed(k, calibName,
+                    $"QUARANTINE 배관/sanity (수치 golden 아님): {k} arm error: " + ex.Message);
+            }
+        }
+    }
+
     // -- Viewer P0 loop: open arbitrary image -> process -> save --------------
 
     public LoadedFrameInfo LoadRawFrame(string path, int rows = 0, int cols = 0)

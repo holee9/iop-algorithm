@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using Xdet.Engine.Contract;
 using Xdet.Engine.PythonNet;
 
@@ -203,6 +204,65 @@ public partial class MainWindow : Window
 
     private bool _viewerLoaded;
     private bool _viewerProcessed;
+
+    /// <summary>
+    /// PRIMARY Viewer flow (feat/xseam-ui-expand): run the selected REGISTERED arm
+    /// (Offset/MasterDark, Gain/CalSet_19008, Defect/BPM) on the REAL edrogi 아크릴 frame
+    /// with its REAL CalibSet via <see cref="IXdetEngine.RunRegisteredArm"/>. The engine
+    /// returns sanity + stats (incl. max|delta|, proving the REAL correction) + downsampled
+    /// before/after previews; the corrected output is held engine-side so 'Save output...'
+    /// persists it. The UI performs no DSP (SPEC-VIEWER-001) and labels the result QUARANTINE.
+    /// </summary>
+    private async void RunRegisteredArmButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Resolve the selected arm kind from the ComboBoxItem Tag (offset|gain|defect).
+        string kind = (ArmSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "offset";
+
+        if (!TryBeginWork()) return;
+        try
+        {
+            RegisteredArmResult result = await Task.Run(() => Seam!.RunRegisteredArm(kind));
+
+            if (!result.ImagesPresent)
+            {
+                // Honest, non-error verdict when the sample tree is absent.
+                _viewerProcessed = false;
+                ViewerInfo.Text = result.Status;
+                ViewerStatus.Text = "viewer: registered arm — images absent";
+                StatusText.Text = "engine: ready (registered arm: images absent)";
+                return;
+            }
+
+            if (result.BeforePreview is not null)
+                RenderHeatmap(ViewerBeforePlot, result.BeforePreview,
+                    $"REAL {result.Kind} signal (QUARANTINE, ~512² preview)");
+            if (result.AfterPreview is not null)
+                RenderHeatmap(ViewerAfterPlot, result.AfterPreview,
+                    $"REAL {result.Kind}-corrected (QUARANTINE, ~512² preview)");
+
+            // All numbers are engine-computed (golden/numpy) — the UI derives nothing.
+            ViewerInfo.Text =
+                $"{result.Status}  file={result.SignalName}  calib={result.CalibName}  " +
+                $"[shape {result.Rows}x{result.Cols}, dtype {result.Dtype}, finite={result.Finite}, " +
+                $"std={result.Std:G4}, min={result.Min:G4}, max={result.Max:G4}, mean={result.Mean:G4}]  " +
+                $"max|delta|={result.MaxAbsChangeFromInput:G4}  sane={result.Sane}";
+            // The corrected output is held engine-side; enable Save when the arm was sane.
+            _viewerProcessed = result.Sane;
+            _viewerLoaded = false;   // registered arm supersedes any arbitrary-loaded frame
+            ViewerStatus.Text = result.Sane
+                ? $"viewer: {result.Kind} arm done (real correction, max|delta|={result.MaxAbsChangeFromInput:G4}) — click 'Save output...'"
+                : $"viewer: {result.Kind} arm ran but SANITY FAILED";
+            StatusText.Text = "engine: ready (registered arm done)";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "registered arm error: " + ex.Message;
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
 
     private async void OpenImageButton_Click(object sender, RoutedEventArgs e)
     {
@@ -424,6 +484,7 @@ public partial class MainWindow : Window
         MtfButton.IsEnabled = false;
         PipelineButton.IsEnabled = false;
         RealImageButton.IsEnabled = false;
+        RunRegisteredArmButton.IsEnabled = false;
         OpenImageButton.IsEnabled = false;
         ViewerProcessButton.IsEnabled = false;
         ViewerSaveButton.IsEnabled = false;
@@ -437,8 +498,10 @@ public partial class MainWindow : Window
         MtfButton.IsEnabled = true;
         PipelineButton.IsEnabled = true;
         RealImageButton.IsEnabled = true;
-        // Viewer buttons follow the P0-loop state: Open is always available; Run
-        // offset needs a loaded frame; Save needs a processed frame.
+        // Viewer buttons follow the loop state: the registered-arm and Open buttons are
+        // always available; Run offset needs an arbitrary-loaded frame; Save needs a
+        // processed frame (from either the registered arm or the arbitrary offset).
+        RunRegisteredArmButton.IsEnabled = true;
         OpenImageButton.IsEnabled = true;
         ViewerProcessButton.IsEnabled = _viewerLoaded;
         ViewerSaveButton.IsEnabled = _viewerProcessed;

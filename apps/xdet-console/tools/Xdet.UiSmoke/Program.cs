@@ -101,13 +101,19 @@ internal static class Program
             bool realImage = RunTab(window, cf, "REALIMAGE", "RealImageTab", "RealImageButton", "RealImageInfo",
                 "real image error", RealImageTimeoutSec, Path.Combine(screensDir, "realimage.png"));
 
-            // 3) Drive the Viewer P0 loop end-to-end: Open image -> Run offset -> Save
-            //    output, capturing a screenshot after each step and asserting the saved
-            //    npz exists. File paths are injected via the env presets set above.
+            // 3) Drive the Viewer PRIMARY flow: the REGISTERED test set. For each arm
+            //    (offset/gain/defect) select it in the ArmSelector combobox, click 'Run
+            //    registered arm', capture a per-arm screenshot, then Save one arm's output
+            //    and assert the npz exists. The save path is injected via the env preset.
+            bool registered = RunRegisteredArms(window, cf, screensDir, viewerOpenPath, viewerSavePath);
+
+            // 4) Drive the SECONDARY (arbitrary) Viewer loop end-to-end: Open image ->
+            //    Run offset -> Save output, capturing a screenshot after each step and
+            //    asserting the saved npz exists. File paths come from the env presets.
             bool viewer = RunViewer(window, cf, screensDir, viewerOpenPath, viewerSavePath);
 
             Console.WriteLine();
-            bool all = offset && mtf && pipeline && realImage && viewer;
+            bool all = offset && mtf && pipeline && realImage && registered && viewer;
             Console.WriteLine("=== RESULT: " + (all ? "ALL PASS" : "FAIL") + " ===");
             return all ? 0 : 1;
         }
@@ -205,8 +211,101 @@ internal static class Program
     }
 
     /// <summary>
-    /// Drive the Viewer P0 loop end-to-end (feat/xseam-ui-expand): select the Viewer
-    /// tab, then Open image... -> Run offset -> Save output..., capturing a screenshot
+    /// Drive the Viewer PRIMARY flow (feat/xseam-ui-expand): the REGISTERED edrogi test
+    /// set. Select the Viewer tab, then for each arm (offset/gain/defect) pick it in the
+    /// ArmSelector combobox, click 'Run registered arm', wait until ViewerStatus reports
+    /// the arm is done, and capture a per-arm screenshot (registered_offset/gain/defect.png).
+    /// Finally Save one arm's output (offset) via the env-preset path and assert the npz
+    /// exists. Skips cleanly (PASS) when the edrogi sample is absent (MasterDark proxy).
+    /// </summary>
+    private static bool RunRegisteredArms(
+        Window window, ConditionFactory cf, string screensDir, string edrogiProbe, string savePath)
+    {
+        Console.WriteLine();
+        Console.WriteLine("REGISTERED: Viewer primary flow (real signal + real calib arms)");
+        if (!File.Exists(edrogiProbe))
+        {
+            Console.WriteLine("REGISTERED: SKIP — edrogi sample absent: " + edrogiProbe);
+            return true;   // clean skip when images are absent (matches the xUnit suite)
+        }
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId("ViewerTab"));
+            if (tab is null) { Console.WriteLine("REGISTERED: FAIL tab 'ViewerTab' not found"); return false; }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);
+
+            // Each arm: select in the combobox, run, wait for "done", screenshot. The real
+            // 3072² acrylic frame + calib source load, so use the generous budget.
+            (string label, int index, string shot)[] arms =
+            {
+                ("offset", 0, "registered_offset.png"),
+                ("gain",   1, "registered_gain.png"),
+                ("defect", 2, "registered_defect.png"),
+            };
+            foreach (var (label, index, shot) in arms)
+            {
+                if (!SelectArm(window, cf, index, label)) return false;
+                // Wait for the ARM-SPECIFIC completion token ("{kind} arm done") — a generic
+                // "done" would match the previous arm's stale status and pass prematurely.
+                if (!ClickAndWait(window, cf, "RunRegisteredArmButton", "ViewerStatus", label + " arm done",
+                        RealImageTimeoutSec, "REGISTERED/" + label)) return false;
+                Thread.Sleep(TabRealizeMs);   // let the heatmaps paint first
+                CaptureWindow(window, Path.Combine(screensDir, shot));
+            }
+
+            // Save one arm's output (the current output is 'defect' from the loop above;
+            // re-run 'offset' so the saved frame is the deterministic offset correction).
+            if (!SelectArm(window, cf, 0, "offset")) return false;
+            if (!ClickAndWait(window, cf, "RunRegisteredArmButton", "ViewerStatus", "offset arm done",
+                    RealImageTimeoutSec, "REGISTERED/offset(save-prep)")) return false;
+
+            // Delete any prior save so the assertion proves THIS registered-arm save wrote it.
+            try { if (File.Exists(savePath)) File.Delete(savePath); } catch { /* best-effort */ }
+            if (!ClickAndWait(window, cf, "ViewerSaveButton", "ViewerStatus", "saved",
+                    ActionTimeoutSec, "REGISTERED/save")) return false;
+            if (!File.Exists(savePath))
+            {
+                Console.WriteLine("REGISTERED: FAIL saved npz not found: " + savePath);
+                return false;
+            }
+            long size = new FileInfo(savePath).Length;
+            Console.WriteLine($"REGISTERED: PASS saved arm npz exists: {savePath} ({size} bytes)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"REGISTERED: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Select the arm at <paramref name="index"/> in the ArmSelector combobox (WPF, UIA3).
+    /// Logs the resolved selection; returns false when the combobox or item is unreachable.
+    /// </summary>
+    private static bool SelectArm(Window window, ConditionFactory cf, int index, string label)
+    {
+        try
+        {
+            var combo = window.FindFirstDescendant(cf.ByAutomationId("ArmSelector"))?.AsComboBox();
+            if (combo is null) { Console.WriteLine($"REGISTERED/{label}: FAIL ArmSelector not found"); return false; }
+            combo.Select(index);
+            Thread.Sleep(TabRealizeMs);
+            string sel = combo.SelectedItem?.Text ?? "(?)";
+            Console.WriteLine($"REGISTERED/{label}: arm selected -> \"{sel}\"");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"REGISTERED/{label}: FAIL select exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drive the Viewer SECONDARY (arbitrary) loop end-to-end (feat/xseam-ui-expand):
+    /// select the Viewer tab, then Open image... -> Run offset -> Save output..., capturing a screenshot
     /// (viewer_loaded / viewer_processed / viewer_saved) after each step and asserting
     /// the saved npz exists. The Open/Save file paths are injected via env presets
     /// (set in Main before launch), so the native dialogs are bypassed and the full

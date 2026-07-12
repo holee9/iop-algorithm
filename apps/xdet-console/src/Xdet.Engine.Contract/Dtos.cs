@@ -150,6 +150,55 @@ public sealed record RealImageSanityResult(
                "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, null, null);
 }
 
+/// <summary>
+/// Result of a QUARANTINE registered-arm run (SPEC-REALDATA-001, feat/xseam-ui-expand):
+/// the golden OFFSET / GAIN / DEFECT stage executed on the REAL edrogi 아크릴 acquisition
+/// frame using the REAL CalibSet built from the registered calibration source
+/// (MasterDark / CalSet_19008 / BPM), mirroring <c>tests/test_tc_realdata_arms.py</c>
+/// (<c>test_tc_001/002/003</c>) EXACTLY. [HARD] NON-AUTHORITATIVE plumbing/sanity: proves
+/// the stage EXECUTES on a real 3072x3072 frame with its real calib and yields finite,
+/// non-degenerate output — never a numeric golden (no tolerance fitted, no reference).
+///
+/// Because the calib is REAL (offset subtracts the real dark, gain scales by the real
+/// flat-field, defect interpolates the real bad pixels), the correction is MEANINGFUL:
+/// <see cref="MaxAbsChangeFromInput"/> (engine-computed max|output-input| over the full-res
+/// golden output) is &gt; 0 — unlike a synthetic zero-dark no-op. Every value here is
+/// computed ENGINE-side (numpy over the golden output); the previews are downsampled
+/// ENGINE-side. The UI performs no DSP and no downsampling (SPEC-VIEWER-001). When the
+/// sample tree is absent (<see cref="ImagesPresent"/> == false) the previews are null and
+/// the numeric fields are zero — the engine returns cleanly rather than throwing.
+/// </summary>
+public sealed record RegisteredArmResult(
+    string Kind,
+    string CalibName,
+    bool ImagesPresent,
+    bool Sane,
+    string Status,
+    string SignalName,
+    int Rows,
+    int Cols,
+    string Dtype,
+    bool Finite,
+    double Std,
+    double Min,
+    double Max,
+    double Mean,
+    double MaxAbsChangeFromInput,
+    FrameData? BeforePreview,
+    FrameData? AfterPreview)
+{
+    /// <summary>The sample acquisition tree is absent — a clean, non-throwing verdict.</summary>
+    public static RegisteredArmResult Absent(string kind, string calibName, string edrogiRoot)
+        => new(kind, calibName, false, false,
+               $"QUARANTINE 배관/sanity (수치 golden 아님): real images absent — {edrogiRoot}",
+               "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, 0.0, null, null);
+
+    /// <summary>A clean, non-throwing arm-failure verdict (e.g. unknown kind, no signal raw).</summary>
+    public static RegisteredArmResult Failed(string kind, string calibName, string status)
+        => new(kind, calibName, true, false, status, "", 0, 0, "", false,
+               0.0, 0.0, 0.0, 0.0, 0.0, null, null);
+}
+
 // -- Viewer P0 loop DTOs (SPEC-XSEAM-001 feat/xseam-ui-expand) ----------------
 // The usable algorithm-verification loop: open an arbitrary test image -> process
 // it -> view before/after -> save the result. All three DTOs are CLR-only (no
