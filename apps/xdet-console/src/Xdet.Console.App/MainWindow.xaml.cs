@@ -1,7 +1,9 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Xdet.Engine.Contract;
 using Xdet.Engine.PythonNet;
 
@@ -30,9 +32,26 @@ public partial class MainWindow : Window
     // SWR-601 [B] default raw saturation threshold (0.98 of the 16-bit full scale).
     private const double RawSaturationThreshold = 0.98 * 65535.0;
 
+    // The three before/after/diff comparison groups (feat/xseam-ui-expand). Each owns its
+    // tab's before/after/diff heatmaps + shared W/L inputs + hover probe (SPEC-VIEWER-001
+    // C-01/C-03/C-06). Constructed after InitializeComponent so the named XAML elements
+    // exist; the engine-computed diff is passed IN — the group never computes DSP (C-09).
+    private readonly CompareGroup _viewerGroup;
+    private readonly CompareGroup _offsetGroup;
+    private readonly CompareGroup _pipelineGroup;
+
     public MainWindow()
     {
         InitializeComponent();
+        _viewerGroup = new CompareGroup(
+            ViewerBeforePlot, ViewerAfterPlot, ViewerDiffPlot,
+            ViewerWlMin, ViewerWlMax, ViewerWlAuto, ViewerProbeLabel);
+        _offsetGroup = new CompareGroup(
+            OffsetInputPlot, OffsetOutputPlot, OffsetDiffPlot,
+            OffsetWlMin, OffsetWlMax, OffsetWlAuto, OffsetProbeLabel);
+        _pipelineGroup = new CompareGroup(
+            PipelineInputPlot, PipelineOutputPlot, PipelineDiffPlot,
+            PipelineWlMin, PipelineWlMax, PipelineWlAuto, PipelineProbeLabel);
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -59,13 +78,18 @@ public partial class MainWindow : Window
             var (input, calib) = MakeOffsetCase();
             var offsetParams = new OffsetParams(RawSaturationThreshold);
 
-            // Seam call: C# -> golden offset.process -> C#. The correction happens in
-            // the golden; the UI receives the corrected frame back.
-            FrameData output = await Task.Run(() => Seam!.RunOffset(input, calib, offsetParams));
+            // Seam call: C# -> golden offset.process -> C#. The correction AND the signed
+            // diff are computed ENGINE-side (ComputeDiffPreview subtracts in numpy); the UI
+            // renders input / output / diff and computes nothing itself (SPEC-VIEWER-001 C-09).
+            var (output, diff) = await Task.Run(() =>
+            {
+                FrameData outFrame = Seam!.RunOffset(input, calib, offsetParams);
+                DiffPreviewResult d = Seam!.ComputeDiffPreview(input, outFrame);
+                return (outFrame, d);
+            });
 
-            // Upgraded from a single-row line plot to full 2-D before/after heatmaps.
-            RenderHeatmap(OffsetInputPlot, input, "Offset input");
-            RenderHeatmap(OffsetOutputPlot, output, "Offset-corrected (SWR-101~104)");
+            _offsetGroup.Render(input, output, diff.Diff, diff.MaxAbsDiff,
+                "Offset input", "Offset-corrected (SWR-101~104)");
 
             OffsetInfo.Text =
                 $"frame {input.Rows}x{input.Cols}  S_th={RawSaturationThreshold:F0}  " +
@@ -130,8 +154,10 @@ public partial class MainWindow : Window
             PipelineResult result = await Task.Run(() =>
                 Seam!.RunPipeline(input, offsetCalib, offsetParams, gainCalib, gainParams));
 
-            RenderHeatmap(PipelineInputPlot, result.Input, "Pipeline input");
-            RenderHeatmap(PipelineOutputPlot, result.Output, "After offset -> gain");
+            // The diff preview (output - input) is engine-computed (numpy); the UI renders
+            // input / output / diff with a diverging colormap and subtracts nothing (C-09).
+            _pipelineGroup.Render(result.Input, result.Output, result.DiffPreview, result.MaxAbsDiff,
+                "Pipeline input", "After offset -> gain");
 
             // All numbers are engine-computed (golden/numpy), not derived in the UI.
             PipelineInfo.Text =
@@ -233,11 +259,12 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (result.BeforePreview is not null)
-                RenderHeatmap(ViewerBeforePlot, result.BeforePreview,
-                    $"REAL {result.Kind} signal (QUARANTINE, ~512² preview)");
-            if (result.AfterPreview is not null)
-                RenderHeatmap(ViewerAfterPlot, result.AfterPreview,
+            // The diff preview is engine-computed (numpy, after-before on the ~512² previews);
+            // the UI renders before / after / diff with a shared W/L + hover probe (C-09).
+            if (result.BeforePreview is not null && result.AfterPreview is not null)
+                _viewerGroup.Render(result.BeforePreview, result.AfterPreview,
+                    result.DiffPreview, result.MaxAbsDiff,
+                    $"REAL {result.Kind} signal (QUARANTINE, ~512² preview)",
                     $"REAL {result.Kind}-corrected (QUARANTINE, ~512² preview)");
 
             // All numbers are engine-computed (golden/numpy) — the UI derives nothing.
@@ -296,11 +323,9 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // Loaded-only state: render just the before preview; clear any stale after/diff.
             if (info.Preview is not null)
-                RenderHeatmap(ViewerBeforePlot, info.Preview, "loaded (QUARANTINE, ~512² preview)");
-            // Clear any stale "after" from a previous frame.
-            ViewerAfterPlot.Plot.Clear();
-            ViewerAfterPlot.Refresh();
+                _viewerGroup.RenderSingle(info.Preview, "loaded (QUARANTINE, ~512² preview)");
 
             ViewerInfo.Text =
                 $"{info.Status}  min={info.Min:G4} max={info.Max:G4} mean={info.Mean:G4}";
@@ -334,10 +359,11 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (result.BeforePreview is not null)
-                RenderHeatmap(ViewerBeforePlot, result.BeforePreview, "before (QUARANTINE, ~512² preview)");
-            if (result.AfterPreview is not null)
-                RenderHeatmap(ViewerAfterPlot, result.AfterPreview, "after offset (QUARANTINE, ~512² preview)");
+            // Engine-computed diff preview (numpy); the UI renders before / after / diff.
+            if (result.BeforePreview is not null && result.AfterPreview is not null)
+                _viewerGroup.Render(result.BeforePreview, result.AfterPreview,
+                    result.DiffPreview, result.MaxAbsDiff,
+                    "before (QUARANTINE, ~512² preview)", "after offset (QUARANTINE, ~512² preview)");
 
             ViewerInfo.Text =
                 $"{result.Status}  out[min={result.OutputMin:G4}, max={result.OutputMax:G4}, mean={result.OutputMean:G4}]";
@@ -397,22 +423,85 @@ public partial class MainWindow : Window
 
     // -- rendering (pure display: array selection + float->double cast only) ------
 
-    /// <summary>Render a frame as a 2-D ScottPlot heatmap (row-major -> [row, col]).</summary>
-    private static void RenderHeatmap(ScottPlot.WPF.WpfPlot view, FrameData frame, string title)
+    /// <summary>Row-major FrameData -> ScottPlot [row, col] grid (display cast only, no DSP).</summary>
+    private static double[,] ToGrid(FrameData frame)
     {
         var grid = new double[frame.Rows, frame.Cols];
         for (int r = 0; r < frame.Rows; r++)
             for (int c = 0; c < frame.Cols; c++)
                 grid[r, c] = frame.Pixels[r * frame.Cols + c];
+        return grid;
+    }
 
+    /// <summary>
+    /// Fully reset a plot before a re-render: clear the plottables (the heatmap) AND remove
+    /// every existing ColorBar. A ScottPlot ColorBar is an edge <c>IPanel</c>, NOT a
+    /// plottable, so <c>Plot.Clear()</c> leaves it in place — without this, repeatedly
+    /// rendering the same plot (e.g. the Viewer's offset/gain/defect arms) stacks colorbars
+    /// that squeeze the heatmap to nothing.
+    /// </summary>
+    private static void ResetPlot(ScottPlot.WPF.WpfPlot view)
+    {
         view.Plot.Clear();
-        var heatmap = view.Plot.Add.Heatmap(grid);
+        foreach (var bar in view.Plot.Axes.GetPanels().OfType<ScottPlot.Panels.ColorBar>().ToList())
+            view.Plot.Remove(bar);
+    }
+
+    /// <summary>
+    /// Render a frame as a 2-D ScottPlot heatmap (row-major -> [row, col]) and return the
+    /// heatmap so callers can set a shared Window/Level color range (C-01). Pure display.
+    /// </summary>
+    private static ScottPlot.Plottables.Heatmap RenderHeatmap(
+        ScottPlot.WPF.WpfPlot view, FrameData frame, string title)
+    {
+        ResetPlot(view);
+        var heatmap = view.Plot.Add.Heatmap(ToGrid(frame));
         view.Plot.Add.ColorBar(heatmap);
         view.Plot.Title(title);
         view.Plot.XLabel("column");
         view.Plot.YLabel("row");
+        view.Plot.Axes.AutoScale();   // fit the spatial axes to the frame every re-render
         view.Refresh();
+        return heatmap;
     }
+
+    /// <summary>
+    /// Render the ENGINE-computed diff preview with a 0-centered diverging colormap over a
+    /// SYMMETRIC ±max|diff| range (SPEC-VIEWER-001 C-06). Pure render: the diff array is
+    /// engine-produced (numpy after-before); this only maps values to colors (blue negative,
+    /// white 0, red positive). Returns the heatmap for the hover probe.
+    /// </summary>
+    private static ScottPlot.Plottables.Heatmap RenderDiffHeatmap(
+        ScottPlot.WPF.WpfPlot view, FrameData diff, double maxAbsDiff, string title)
+    {
+        ResetPlot(view);
+        var heatmap = view.Plot.Add.Heatmap(ToGrid(diff));
+        heatmap.Colormap = MakeDivergingColormap();
+        double peak = maxAbsDiff > 0.0 ? maxAbsDiff : 1.0;   // guard the all-zero-diff case
+        heatmap.ManualRange = new ScottPlot.Range(-peak, peak);   // symmetric, 0 -> white
+        view.Plot.Add.ColorBar(heatmap);
+        view.Plot.Title(title);
+        view.Plot.XLabel("column");
+        view.Plot.YLabel("row");
+        view.Plot.Axes.AutoScale();   // fit the spatial axes to the diff frame every re-render
+        view.Refresh();
+        return heatmap;
+    }
+
+    /// <summary>
+    /// Blue-white-red diverging colormap mirroring SPEC-VIEWER-001's <c>_diverging_colormap</c>
+    /// (apps/gui/layers.py): blue for negative, white at the 0 midpoint, red for positive.
+    /// Paired with a symmetric ±range so 0 maps to white (C-06).
+    /// </summary>
+    private static ScottPlot.IColormap MakeDivergingColormap()
+        => new ScottPlot.Colormaps.Custom(
+            new[]
+            {
+                new ScottPlot.Color((byte)30, (byte)60, (byte)220, (byte)255),   // negative -> blue
+                new ScottPlot.Color((byte)255, (byte)255, (byte)255, (byte)255), // zero -> white
+                new ScottPlot.Color((byte)220, (byte)30, (byte)30, (byte)255),   // positive -> red
+            },
+            smooth: true);
 
     private static void RenderMtf(ScottPlot.WPF.WpfPlot view, MtfResult result)
     {
@@ -505,5 +594,200 @@ public partial class MainWindow : Window
         OpenImageButton.IsEnabled = true;
         ViewerProcessButton.IsEnabled = _viewerLoaded;
         ViewerSaveButton.IsEnabled = _viewerProcessed;
+    }
+
+    // -- before/after/diff comparison group (C-01/C-03/C-06) ----------------------
+
+    /// <summary>
+    /// A before/after/diff heatmap comparison group (feat/xseam-ui-expand), mirroring
+    /// SPEC-VIEWER-001's <c>WindowLevelControl</c> + <c>CompareView</c> + hover probe
+    /// (apps/gui/layers.py, apps/gui/probe.py). It owns one tab's three heatmaps and:
+    /// <list type="bullet">
+    ///   <item><b>Shared W/L (C-01):</b> two numeric inputs set the SAME color range on the
+    ///   before AND after heatmaps (so they are visually comparable — fixing the old
+    ///   independent auto-scale); 'Auto' resets to the before-preview min/max.</item>
+    ///   <item><b>Diff heatmap (C-06):</b> the ENGINE-computed diff rendered with a 0-centered
+    ///   diverging colormap over its own symmetric ±max|diff| range.</item>
+    ///   <item><b>Pixel probe (C-03):</b> on hover, map the plot coordinate to a preview
+    ///   (row,col) via ScottPlot's own heatmap transform, then read the STORED float32
+    ///   before/after/diff values (via <see cref="ProbeReadout"/>) into a label.</item>
+    /// </list>
+    /// Pure render: it sets ScottPlot color ranges/colormaps and reads stored values; it
+    /// computes NO DSP (the diff is engine-produced and passed in, C-09/C-11).
+    /// </summary>
+    private sealed class CompareGroup
+    {
+        private readonly ScottPlot.WPF.WpfPlot _beforePlot;
+        private readonly ScottPlot.WPF.WpfPlot _afterPlot;
+        private readonly ScottPlot.WPF.WpfPlot _diffPlot;
+        private readonly TextBox _wlMin;
+        private readonly TextBox _wlMax;
+        private readonly TextBlock _probe;
+
+        private FrameData? _before;
+        private FrameData? _after;
+        private FrameData? _diff;
+        private ScottPlot.Plottables.Heatmap? _beforeHeat;
+        private ScottPlot.Plottables.Heatmap? _afterHeat;
+        private ScottPlot.Plottables.Heatmap? _diffHeat;
+        private bool _suppressWl;      // ignore programmatic textbox writes (no feedback loop)
+        private long _lastProbeTick;   // hover throttle timestamp
+
+        public CompareGroup(
+            ScottPlot.WPF.WpfPlot beforePlot, ScottPlot.WPF.WpfPlot afterPlot, ScottPlot.WPF.WpfPlot diffPlot,
+            TextBox wlMin, TextBox wlMax, Button wlAuto, TextBlock probe)
+        {
+            _beforePlot = beforePlot;
+            _afterPlot = afterPlot;
+            _diffPlot = diffPlot;
+            _wlMin = wlMin;
+            _wlMax = wlMax;
+            _probe = probe;
+
+            _wlMin.TextChanged += (_, _) => OnWlChanged();
+            _wlMax.TextChanged += (_, _) => OnWlChanged();
+            wlAuto.Click += (_, _) => AutoWindowLevel();
+
+            _beforePlot.MouseMove += OnHeatmapMouseMove;
+            _afterPlot.MouseMove += OnHeatmapMouseMove;
+            _diffPlot.MouseMove += OnHeatmapMouseMove;
+        }
+
+        /// <summary>
+        /// Render before + after + the engine diff, seed the shared W/L from the before-preview
+        /// min/max, and apply it to both before/after. The diff keeps its own symmetric range.
+        /// </summary>
+        public void Render(
+            FrameData before, FrameData after, FrameData? diff, double maxAbsDiff,
+            string titleBefore, string titleAfter)
+        {
+            _before = before;
+            _after = after;
+            _diff = diff;
+            _beforeHeat = RenderHeatmap(_beforePlot, before, titleBefore);
+            _afterHeat = RenderHeatmap(_afterPlot, after, titleAfter);
+
+            (double lo, double hi) = MinMax(before);
+            SetInputs(lo, hi);
+            ApplyWindowLevel(lo, hi);
+
+            if (diff is not null)
+            {
+                _diffHeat = RenderDiffHeatmap(_diffPlot, diff, maxAbsDiff, "diff (after - before)");
+            }
+            else
+            {
+                _diffHeat = null;
+                ResetPlot(_diffPlot);
+                _diffPlot.Refresh();
+            }
+            _probe.Text = "probe (row,col): move mouse over a heatmap";
+        }
+
+        /// <summary>
+        /// Render a single before-only frame (the loaded-but-not-processed state): clear the
+        /// after/diff heatmaps and seed the shared W/L from this frame.
+        /// </summary>
+        public void RenderSingle(FrameData frame, string title)
+        {
+            _before = frame;
+            _after = null;
+            _diff = null;
+            _beforeHeat = RenderHeatmap(_beforePlot, frame, title);
+            _afterHeat = null;
+            ResetPlot(_afterPlot);
+            _afterPlot.Refresh();
+            _diffHeat = null;
+            ResetPlot(_diffPlot);
+            _diffPlot.Refresh();
+
+            (double lo, double hi) = MinMax(frame);
+            SetInputs(lo, hi);
+            ApplyWindowLevel(lo, hi);
+            _probe.Text = "probe (row,col): move mouse over a heatmap";
+        }
+
+        private void OnWlChanged()
+        {
+            if (_suppressWl) return;
+            if (double.TryParse(_wlMin.Text, out double lo) && double.TryParse(_wlMax.Text, out double hi))
+                ApplyWindowLevel(lo, hi);
+        }
+
+        private void AutoWindowLevel()
+        {
+            if (_before is null) return;
+            (double lo, double hi) = MinMax(_before);
+            SetInputs(lo, hi);
+            ApplyWindowLevel(lo, hi);
+        }
+
+        /// <summary>Apply the SAME color range to the before AND after heatmaps (C-01, pure render).</summary>
+        private void ApplyWindowLevel(double low, double high)
+        {
+            if (high <= low) high += 1.0;
+            var range = new ScottPlot.Range(low, high);
+            if (_beforeHeat is not null) { _beforeHeat.ManualRange = range; _beforePlot.Refresh(); }
+            if (_afterHeat is not null) { _afterHeat.ManualRange = range; _afterPlot.Refresh(); }
+        }
+
+        private void SetInputs(double lo, double hi)
+        {
+            _suppressWl = true;
+            _wlMin.Text = lo.ToString("G6");
+            _wlMax.Text = hi.ToString("G6");
+            _suppressWl = false;
+        }
+
+        /// <summary>
+        /// Hover probe (C-03): map the mouse pixel to a plot coordinate, then to a preview
+        /// (row,col) via ScottPlot's OWN heatmap inverse transform (C-02 analog — never a
+        /// re-derived pan/zoom transform), and show the STORED before/after/diff values.
+        /// Throttled to ~30 Hz to avoid spamming the label on every raw mouse-move.
+        /// </summary>
+        private void OnHeatmapMouseMove(object sender, MouseEventArgs e)
+        {
+            if (_before is null) return;
+            long now = Environment.TickCount64;
+            if (now - _lastProbeTick < 33) return;
+            _lastProbeTick = now;
+
+            var plot = (ScottPlot.WPF.WpfPlot)sender;
+            ScottPlot.Plottables.Heatmap? hm =
+                ReferenceEquals(plot, _beforePlot) ? _beforeHeat :
+                ReferenceEquals(plot, _afterPlot) ? _afterHeat : _diffHeat;
+            if (hm is null) return;
+
+            ScottPlot.Pixel px = plot.GetPlotPixelPosition(e);
+            ScottPlot.Coordinates coord = plot.Plot.GetCoordinates(px);
+            (int col, int row) = hm.GetIndexes(coord);   // ScottPlot's own inverse transform
+
+            ProbeSample s = ProbeReadout.Read(_before, _after ?? _before, _diff, row, col);
+            if (!s.InBounds)
+            {
+                _probe.Text = $"probe (row,col)=({row},{col}): out of range";
+                return;
+            }
+            string after = _after is null ? "-" : s.After.ToString("G6");
+            string diff = _diff is null ? "-" : s.Diff.ToString("G6");
+            _probe.Text = $"probe (row,col)=({s.Row},{s.Col}): before={s.Before:G6} after={after} diff={diff}";
+        }
+
+        /// <summary>
+        /// Min/max of a preview for the default display window (mirrors SPEC-VIEWER-001
+        /// <c>make_image_layer</c>: float(np.min)/float(np.max)) — a display-range selection,
+        /// not pipeline DSP. The engine still owns all real numeric processing (C-09).
+        /// </summary>
+        private static (double lo, double hi) MinMax(FrameData f)
+        {
+            if (f.Pixels.Length == 0) return (0.0, 1.0);
+            float lo = f.Pixels[0], hi = f.Pixels[0];
+            foreach (float v in f.Pixels)
+            {
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+            }
+            return (lo, hi);
+        }
     }
 }

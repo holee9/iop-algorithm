@@ -102,6 +102,12 @@ public sealed record EdgePhantomSpec(
 /// <see cref="StagesRun"/> is read from the golden history chain (module_name per
 /// stage); <see cref="MaxAbsChangeFromInput"/> is the golden-computed proof the
 /// pipeline actually transformed the input.
+///
+/// <see cref="DiffPreview"/> is the ENGINE-computed signed (output - input) diff
+/// (numpy, adapter-side) in transport form; the UI renders it with a 0-centered
+/// diverging colormap and never computes the subtraction itself (SPEC-VIEWER-001
+/// C-09/C-11). <see cref="MaxAbsDiff"/> is max|diff| over that preview — the
+/// symmetric ±range for the diff colormap.
 /// </summary>
 public sealed record PipelineResult(
     FrameData Input,
@@ -110,7 +116,9 @@ public sealed record PipelineResult(
     double OutputMin,
     double OutputMax,
     double OutputMean,
-    double MaxAbsChangeFromInput);
+    double MaxAbsChangeFromInput,
+    FrameData? DiffPreview,
+    double MaxAbsDiff);
 
 /// <summary>
 /// Result of the QUARANTINE plumbing/sanity run of the golden OFFSET stage on a REAL
@@ -167,6 +175,12 @@ public sealed record RealImageSanityResult(
 /// ENGINE-side. The UI performs no DSP and no downsampling (SPEC-VIEWER-001). When the
 /// sample tree is absent (<see cref="ImagesPresent"/> == false) the previews are null and
 /// the numeric fields are zero — the engine returns cleanly rather than throwing.
+///
+/// <see cref="DiffPreview"/> is the ENGINE-computed signed (after - before) diff of the
+/// two ~512x512 previews (numpy, adapter-side), in transport form; the UI renders it with
+/// a 0-centered diverging colormap and never computes the subtraction itself (C-09/C-11).
+/// <see cref="MaxAbsDiff"/> is max|diff| over that preview — the symmetric ±range for the
+/// diff colormap (distinct from <see cref="MaxAbsChangeFromInput"/>, the full-res delta).
 /// </summary>
 public sealed record RegisteredArmResult(
     string Kind,
@@ -185,18 +199,20 @@ public sealed record RegisteredArmResult(
     double Mean,
     double MaxAbsChangeFromInput,
     FrameData? BeforePreview,
-    FrameData? AfterPreview)
+    FrameData? AfterPreview,
+    FrameData? DiffPreview,
+    double MaxAbsDiff)
 {
     /// <summary>The sample acquisition tree is absent — a clean, non-throwing verdict.</summary>
     public static RegisteredArmResult Absent(string kind, string calibName, string edrogiRoot)
         => new(kind, calibName, false, false,
                $"QUARANTINE 배관/sanity (수치 golden 아님): real images absent — {edrogiRoot}",
-               "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, 0.0, null, null);
+               "", 0, 0, "", false, 0.0, 0.0, 0.0, 0.0, 0.0, null, null, null, 0.0);
 
     /// <summary>A clean, non-throwing arm-failure verdict (e.g. unknown kind, no signal raw).</summary>
     public static RegisteredArmResult Failed(string kind, string calibName, string status)
         => new(kind, calibName, true, false, status, "", 0, 0, "", false,
-               0.0, 0.0, 0.0, 0.0, 0.0, null, null);
+               0.0, 0.0, 0.0, 0.0, 0.0, null, null, null, 0.0);
 }
 
 // -- Viewer P0 loop DTOs (SPEC-XSEAM-001 feat/xseam-ui-expand) ----------------
@@ -242,6 +258,11 @@ public sealed record LoadedFrameInfo(
 /// applies its subtract/clamp/saturation contract without inventing a fitted
 /// correction. All stats + the ~512x512 before/after previews are engine-computed.
 /// On failure <see cref="Processed"/> is false and <see cref="Status"/> explains why.
+///
+/// <see cref="DiffPreview"/> is the ENGINE-computed signed (after - before) diff of the
+/// two ~512x512 previews (numpy, adapter-side), in transport form; the UI renders it with
+/// a 0-centered diverging colormap and computes no subtraction itself (C-09/C-11).
+/// <see cref="MaxAbsDiff"/> is max|diff| over that preview — the symmetric ±diff range.
 /// </summary>
 public sealed record ProcessedFrameInfo(
     bool Processed,
@@ -252,12 +273,26 @@ public sealed record ProcessedFrameInfo(
     double OutputMean,
     double MaxAbsChangeFromInput,
     FrameData? BeforePreview,
-    FrameData? AfterPreview)
+    FrameData? AfterPreview,
+    FrameData? DiffPreview,
+    double MaxAbsDiff)
 {
     /// <summary>A clean, non-throwing process-failure verdict.</summary>
     public static ProcessedFrameInfo Failed(string status)
-        => new(false, status, Array.Empty<string>(), 0.0, 0.0, 0.0, 0.0, null, null);
+        => new(false, status, Array.Empty<string>(), 0.0, 0.0, 0.0, 0.0, null, null, null, 0.0);
 }
+
+/// <summary>
+/// Result of the ENGINE-side (after - before) diff preview computed on demand by
+/// <see cref="IXdetEngine.ComputeDiffPreview"/> for a before/after pair the UI already
+/// holds but whose seam call does not itself carry a diff (the synthetic Offset tab:
+/// input vs <see cref="IXdetEngine.RunOffset"/> output). The subtraction is numpy,
+/// adapter-side (SPEC-VIEWER-001 C-09/C-11: the UI renders <see cref="Diff"/>, never
+/// computes it). <see cref="MaxAbsDiff"/> is max|diff| — the symmetric ±diff range.
+/// </summary>
+public sealed record DiffPreviewResult(
+    FrameData Diff,
+    double MaxAbsDiff);
 
 /// <summary>
 /// Result of saving the processed frame (Viewer P0 save step). The engine FIRST

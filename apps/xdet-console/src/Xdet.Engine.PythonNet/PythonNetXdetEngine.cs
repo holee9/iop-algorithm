@@ -122,6 +122,22 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    public DiffPreviewResult ComputeDiffPreview(FrameData before, FrameData after)
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            // C# before/after -> numpy -> signed (after - before) in numpy -> C#. The UI
+            // holds both frames (e.g. the Offset tab's input + RunOffset output) but never
+            // subtracts them itself (SPEC-VIEWER-001 C-09/C-11): the diff is computed HERE.
+            PyObject b = FloatArrayToNumpy(before.Pixels, before.Rows, before.Cols, np);
+            PyObject a = FloatArrayToNumpy(after.Pixels, after.Rows, after.Cols, np);
+            FrameData diff = MakeDiffPreview(b, a, np, out double maxAbsDiff);
+            return new DiffPreviewResult(diff, maxAbsDiff);
+        }
+    }
+
     public PipelineResult RunPipeline(
         FrameData input,
         OffsetCalibData offsetCalib, OffsetParams offsetParams,
@@ -156,7 +172,12 @@ public sealed class PythonNetXdetEngine : IXdetEngine
             dynamic diffAbs = np.abs(np.subtract(np.asarray(outPix, np.float64), np.asarray(pix, np.float64)));
             double maxAbsChange = ItemAsDouble(np.max(diffAbs));
 
-            return new PipelineResult(input, output, stages, outMin, outMax, outMean, maxAbsChange);
+            // ENGINE-computed signed (output - input) diff preview (C-06); the UI renders
+            // it with a diverging colormap and never subtracts the frames itself (C-09).
+            FrameData diffPreview = MakeDiffPreview(pix, outPix, np, out double maxAbsDiff);
+
+            return new PipelineResult(
+                input, output, stages, outMin, outMax, outMean, maxAbsChange, diffPreview, maxAbsDiff);
         }
     }
 
@@ -383,9 +404,14 @@ public sealed class PythonNetXdetEngine : IXdetEngine
                 _loadedFrame?.Dispose();
                 _loadedFrame = null;
 
-                // Engine-side ~512x512 block-mean before/after previews (UI does no DSP).
-                FrameData before = DownsamplePreview(inPix, np, builtins, 512);
-                FrameData after = DownsamplePreview(outPix, np, builtins, 512);
+                // Engine-side ~512x512 block-mean before/after previews (UI does no DSP)
+                // + the ENGINE-computed signed (after - before) diff preview (C-06). The
+                // diff subtraction happens HERE in numpy, never in the UI (C-09/C-11).
+                PyObject beforeBlock = DownsampleBlock(inPix, np, builtins, 512);
+                PyObject afterBlock = DownsampleBlock(outPix, np, builtins, 512);
+                FrameData before = FrameDataFromBlock(beforeBlock, np);
+                FrameData after = FrameDataFromBlock(afterBlock, np);
+                FrameData diffPreview = MakeDiffPreview(beforeBlock, afterBlock, np, out double maxAbsDiff);
 
                 string status = sane
                     ? $"QUARANTINE 배관/sanity (수치 golden 아님): {k} EXECUTED on real {rows}x{cols} frame "
@@ -396,7 +422,7 @@ public sealed class PythonNetXdetEngine : IXdetEngine
 
                 return new RegisteredArmResult(
                     k, calibName, true, sane, status, signalName, rows, cols, dtype, finite, std,
-                    min, max, mean, maxAbsChange, before, after);
+                    min, max, mean, maxAbsChange, before, after, diffPreview, maxAbsDiff);
             }
             catch (Exception ex)
             {
@@ -533,14 +559,20 @@ public sealed class PythonNetXdetEngine : IXdetEngine
                 double maxAbsChange = ItemAsDouble(np.max(diffAbs));
                 string[] stages = StagesFromHistory(outFrame);
 
-                FrameData before = DownsamplePreview(inPix, np, builtins, 512);
-                FrameData after = DownsamplePreview(outPix, np, builtins, 512);
+                // Engine-side before/after previews + the ENGINE-computed signed diff
+                // preview (C-06); the diff subtraction is numpy-side, never in the UI (C-09).
+                PyObject beforeBlock = DownsampleBlock(inPix, np, builtins, 512);
+                PyObject afterBlock = DownsampleBlock(outPix, np, builtins, 512);
+                FrameData before = FrameDataFromBlock(beforeBlock, np);
+                FrameData after = FrameDataFromBlock(afterBlock, np);
+                FrameData diffPreview = MakeDiffPreview(beforeBlock, afterBlock, np, out double maxAbsDiff);
 
                 string status =
                     $"QUARANTINE 배관/sanity (수치 golden 아님): offset EXECUTED on {r}x{c} frame "
                     + $"(synthetic zero dark); stages={string.Join("->", stages)}, max|delta|={maxAbsChange:G4}";
                 return new ProcessedFrameInfo(
-                    true, status, stages, outMin, outMax, outMean, maxAbsChange, before, after);
+                    true, status, stages, outMin, outMax, outMean, maxAbsChange,
+                    before, after, diffPreview, maxAbsDiff);
             }
             catch (Exception ex)
             {
@@ -748,6 +780,16 @@ public sealed class PythonNetXdetEngine : IXdetEngine
     /// the UI never touches full-res pixels (SPEC-VIEWER-001, C-20 memory guard).
     /// </summary>
     private static FrameData DownsamplePreview(PyObject pix, dynamic np, dynamic builtins, int target)
+        => FrameDataFromBlock(DownsampleBlock(pix, np, builtins, target), np);
+
+    /// <summary>
+    /// The block-mean downsample of <paramref name="pix"/> as a live numpy (outR, outC)
+    /// float32 array. Split out from <see cref="DownsamplePreview"/> so the before/after
+    /// preview blocks can be reused to compute the C-06 diff preview in numpy WITHOUT a
+    /// second full-res marshal (block-mean is linear: mean(after)-mean(before) equals
+    /// the block-mean of the full-res diff).
+    /// </summary>
+    private static PyObject DownsampleBlock(PyObject pix, dynamic np, dynamic builtins, int target)
     {
         dynamic arr = np.asarray(pix, np.float32);
         PyObject shape = (PyObject)arr.shape;
@@ -769,9 +811,31 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         dynamic reshaped = ((dynamic)cropped).reshape(outR, fr, outC, fc);
         using var axes = new PyTuple(new PyObject[] { new PyInt(1), new PyInt(3) });
         dynamic block = np.mean(reshaped, axes);   // (outR, outC), block-mean
+        return (PyObject)np.asarray(block, np.float32);
+    }
 
-        float[] buf = NumpyToFloatArrayFast((PyObject)block, np);
-        return FrameData.FromPixels(buf, outR, outC);
+    /// <summary>Marshal a 2-D numpy block to a transport <see cref="FrameData"/> (fast bulk path).</summary>
+    private static FrameData FrameDataFromBlock(PyObject block, dynamic np)
+    {
+        PyObject shape = (PyObject)((dynamic)block).shape;
+        int r = ((PyObject)shape[0]).As<int>();
+        int c = ((PyObject)shape[1]).As<int>();
+        float[] buf = NumpyToFloatArrayFast(block, np);
+        return FrameData.FromPixels(buf, r, c);
+    }
+
+    /// <summary>
+    /// ENGINE-side signed (after - before) diff preview: subtract two same-shape numpy
+    /// arrays IN NUMPY (under the GIL), marshal the float32 result to transport form, and
+    /// report max|diff|. The subtraction happens HERE (adapter/numpy), never in the UI
+    /// (SPEC-VIEWER-001 C-09/C-11); the UI only renders the returned diff with a 0-centered
+    /// diverging colormap over ±maxAbsDiff (C-06).
+    /// </summary>
+    private static FrameData MakeDiffPreview(PyObject before, PyObject after, dynamic np, out double maxAbsDiff)
+    {
+        dynamic diff = np.subtract(np.asarray(after, np.float32), np.asarray(before, np.float32));
+        maxAbsDiff = ItemAsDouble(np.max(np.abs(diff)));
+        return FrameDataFromBlock((PyObject)diff, np);
     }
 
     /// <summary>

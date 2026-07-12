@@ -23,6 +23,16 @@ public interface IXdetEngine
     MtfResult ComputeMtf(FrameData input, MtfParams parameters);
 
     /// <summary>
+    /// Compute the signed (after - before) diff preview ENGINE-side (numpy, adapter) for a
+    /// before/after pair the UI already holds but whose own seam call carries no diff — the
+    /// synthetic Offset tab (input vs <see cref="RunOffset"/> output). Returns the diff in
+    /// transport form plus max|diff|. Pure element-wise subtraction: the UI never computes
+    /// the diff itself (SPEC-VIEWER-001 C-09/C-11), it only renders <see cref="DiffPreviewResult.Diff"/>
+    /// with a 0-centered diverging colormap over ±<see cref="DiffPreviewResult.MaxAbsDiff"/>.
+    /// </summary>
+    DiffPreviewResult ComputeDiffPreview(FrameData before, FrameData after);
+
+    /// <summary>
     /// Run a minimal valid golden pipeline — the <c>offset -&gt; gain</c> subsequence of
     /// the orchestrator's <c>CANONICAL_ORDER</c> — over <paramref name="input"/> through
     /// <c>pipeline.orchestrator.run_pipeline</c>. Composition, canonical stage order and

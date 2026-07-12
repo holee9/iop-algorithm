@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:sp="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
         Title="XDET Engine Seam - SPEC-XSEAM-001 P1.5"
-        Height="640" Width="920"
+        Height="760" Width="1240"
         Loaded="Window_Loaded">
     <DockPanel>
         <StatusBar DockPanel.Dock="Bottom">
@@ -60,13 +60,34 @@
                         <TextBlock x:Name="ViewerStatus" AutomationProperties.AutomationId="ViewerStatus"
                                    Text="viewer: idle" TextWrapping="Wrap" Margin="0,2,0,0" />
                     </StackPanel>
+                    <!-- Shared Window/Level (C-01): min/max exact entry sets the SAME color
+                         range on the before AND after heatmaps; 'Auto' resets to the
+                         before-preview min/max. Pure render (no array copy/DSP). -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,4">
+                        <TextBlock Text="Shared W/L:" VerticalAlignment="Center" FontWeight="Bold" Margin="0,0,8,0" />
+                        <TextBlock Text="min" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="ViewerWlMin" AutomationProperties.AutomationId="ViewerWlMin"
+                                 Width="100" VerticalContentAlignment="Center" />
+                        <TextBlock Text="max" VerticalAlignment="Center" Margin="10,0,4,0" />
+                        <TextBox x:Name="ViewerWlMax" AutomationProperties.AutomationId="ViewerWlMax"
+                                 Width="100" VerticalContentAlignment="Center" />
+                        <Button x:Name="ViewerWlAuto" AutomationProperties.AutomationId="ViewerWlAuto"
+                                Content="Auto" Padding="10,2" Margin="10,0,0,0" />
+                    </StackPanel>
+                    <!-- Hover pixel probe (C-03): reads STORED float32 before/after/diff. -->
+                    <TextBlock x:Name="ViewerProbeLabel" AutomationProperties.AutomationId="ViewerProbeLabel"
+                               DockPanel.Dock="Bottom" Margin="8,2,8,6" TextWrapping="Wrap"
+                               Text="probe (row,col): move mouse over a heatmap" />
                     <Grid>
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <sp:WpfPlot x:Name="ViewerBeforePlot" Grid.Column="0" />
                         <sp:WpfPlot x:Name="ViewerAfterPlot" Grid.Column="1" />
+                        <sp:WpfPlot x:Name="ViewerDiffPlot" AutomationProperties.AutomationId="ViewerDiffPlot"
+                                    Grid.Column="2" />
                     </Grid>
                 </DockPanel>
             </TabItem>
@@ -85,13 +106,31 @@
                                    Margin="12,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
+                    <!-- Shared Window/Level (C-01): same color range on input + output. -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,4">
+                        <TextBlock Text="Shared W/L:" VerticalAlignment="Center" FontWeight="Bold" Margin="0,0,8,0" />
+                        <TextBlock Text="min" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="OffsetWlMin" AutomationProperties.AutomationId="OffsetWlMin"
+                                 Width="100" VerticalContentAlignment="Center" />
+                        <TextBlock Text="max" VerticalAlignment="Center" Margin="10,0,4,0" />
+                        <TextBox x:Name="OffsetWlMax" AutomationProperties.AutomationId="OffsetWlMax"
+                                 Width="100" VerticalContentAlignment="Center" />
+                        <Button x:Name="OffsetWlAuto" AutomationProperties.AutomationId="OffsetWlAuto"
+                                Content="Auto" Padding="10,2" Margin="10,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="OffsetProbeLabel" AutomationProperties.AutomationId="OffsetProbeLabel"
+                               DockPanel.Dock="Bottom" Margin="8,2,8,6" TextWrapping="Wrap"
+                               Text="probe (row,col): move mouse over a heatmap" />
                     <Grid>
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <sp:WpfPlot x:Name="OffsetInputPlot" Grid.Column="0" />
                         <sp:WpfPlot x:Name="OffsetOutputPlot" Grid.Column="1" />
+                        <sp:WpfPlot x:Name="OffsetDiffPlot" AutomationProperties.AutomationId="OffsetDiffPlot"
+                                    Grid.Column="2" />
                     </Grid>
                 </DockPanel>
             </TabItem>
@@ -110,13 +149,31 @@
                                    Margin="12,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
+                    <!-- Shared Window/Level (C-01): same color range on input + output. -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,4">
+                        <TextBlock Text="Shared W/L:" VerticalAlignment="Center" FontWeight="Bold" Margin="0,0,8,0" />
+                        <TextBlock Text="min" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBox x:Name="PipelineWlMin" AutomationProperties.AutomationId="PipelineWlMin"
+                                 Width="100" VerticalContentAlignment="Center" />
+                        <TextBlock Text="max" VerticalAlignment="Center" Margin="10,0,4,0" />
+                        <TextBox x:Name="PipelineWlMax" AutomationProperties.AutomationId="PipelineWlMax"
+                                 Width="100" VerticalContentAlignment="Center" />
+                        <Button x:Name="PipelineWlAuto" AutomationProperties.AutomationId="PipelineWlAuto"
+                                Content="Auto" Padding="10,2" Margin="10,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="PipelineProbeLabel" AutomationProperties.AutomationId="PipelineProbeLabel"
+                               DockPanel.Dock="Bottom" Margin="8,2,8,6" TextWrapping="Wrap"
+                               Text="probe (row,col): move mouse over a heatmap" />
                     <Grid>
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <sp:WpfPlot x:Name="PipelineInputPlot" Grid.Column="0" />
                         <sp:WpfPlot x:Name="PipelineOutputPlot" Grid.Column="1" />
+                        <sp:WpfPlot x:Name="PipelineDiffPlot" AutomationProperties.AutomationId="PipelineDiffPlot"
+                                    Grid.Column="2" />
                     </Grid>
                 </DockPanel>
             </TabItem>

@@ -107,13 +107,19 @@ internal static class Program
             //    and assert the npz exists. The save path is injected via the env preset.
             bool registered = RunRegisteredArms(window, cf, screensDir, viewerOpenPath, viewerSavePath);
 
+            // 3b) Compare-and-inspect layer: run the offset arm, set a fixed SHARED Window/Level,
+            //     and capture p1_diff_wl.png — the three heatmaps (before/after/engine-diff) with
+            //     the shared scale applied. (The pixel probe is hover-only; the xUnit readout test
+            //     covers it, so it is not scripted here.)
+            bool diffWl = RunDiffWlShot(window, cf, screensDir, viewerOpenPath);
+
             // 4) Drive the SECONDARY (arbitrary) Viewer loop end-to-end: Open image ->
             //    Run offset -> Save output, capturing a screenshot after each step and
             //    asserting the saved npz exists. File paths come from the env presets.
             bool viewer = RunViewer(window, cf, screensDir, viewerOpenPath, viewerSavePath);
 
             Console.WriteLine();
-            bool all = offset && mtf && pipeline && realImage && registered && viewer;
+            bool all = offset && mtf && pipeline && realImage && registered && diffWl && viewer;
             Console.WriteLine("=== RESULT: " + (all ? "ALL PASS" : "FAIL") + " ===");
             return all ? 0 : 1;
         }
@@ -276,6 +282,75 @@ internal static class Program
         catch (Exception ex)
         {
             Console.WriteLine($"REGISTERED: FAIL exception {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Drive the "compare and inspect" layer (feat/xseam-ui-expand): run the registered
+    /// OFFSET arm so before/after/diff are all populated, then set the SHARED Window/Level
+    /// min/max inputs to fixed values (applying the SAME color scale to the before AND after
+    /// heatmaps), and capture <c>p1_diff_wl.png</c> — the three heatmaps (before / after /
+    /// engine-computed diff) with the shared scale applied. The pixel probe is hover-only and
+    /// is verified by the xUnit readout test, so it is not scripted here. Skips cleanly (PASS)
+    /// when the edrogi sample is absent.
+    /// </summary>
+    private static bool RunDiffWlShot(
+        Window window, ConditionFactory cf, string screensDir, string edrogiProbe)
+    {
+        Console.WriteLine();
+        Console.WriteLine("DIFF/WL: three heatmaps (before/after/diff) + shared Window/Level");
+        if (!File.Exists(edrogiProbe))
+        {
+            Console.WriteLine("DIFF/WL: SKIP — edrogi sample absent: " + edrogiProbe);
+            return true;   // clean skip when images are absent (matches the xUnit suite)
+        }
+        try
+        {
+            var tab = window.FindFirstDescendant(cf.ByAutomationId("ViewerTab"));
+            if (tab is null) { Console.WriteLine("DIFF/WL: FAIL tab 'ViewerTab' not found"); return false; }
+            tab.AsTabItem().Select();
+            Thread.Sleep(TabRealizeMs);
+
+            // Run the OFFSET arm so before/after/diff are populated (real 3072² frame + calib).
+            if (!SelectArm(window, cf, 0, "offset")) return false;
+            if (!ClickAndWait(window, cf, "RunRegisteredArmButton", "ViewerStatus", "offset arm done",
+                    RealImageTimeoutSec, "DIFF/WL/offset")) return false;
+
+            // Note: ScottPlot's WpfPlot renders via a SkiaSharp surface and does not surface
+            // its AutomationId as a discrete UIA element, so the diff heatmap is verified
+            // visually in the captured screenshot (below) rather than by a UIA lookup. The
+            // shared-W/L TextBoxes ARE standard UIA elements and are driven directly.
+            bool diffPlotInTree = window.FindFirstDescendant(cf.ByAutomationId("ViewerDiffPlot")) is not null;
+            Console.WriteLine("DIFF/WL: ViewerDiffPlot UIA element present = " + diffPlotInTree
+                + " (heatmap is verified in the screenshot regardless)");
+
+            // Set the SHARED W/L min/max to fixed values -> same color range on before + after.
+            var wlMin = window.FindFirstDescendant(cf.ByAutomationId("ViewerWlMin"))?.AsTextBox();
+            var wlMax = window.FindFirstDescendant(cf.ByAutomationId("ViewerWlMax"))?.AsTextBox();
+            if (wlMin is null || wlMax is null)
+            {
+                Console.WriteLine("DIFF/WL: FAIL shared W/L inputs not found");
+                return false;
+            }
+            wlMin.Text = "0";
+            wlMax.Text = "4000";
+            Thread.Sleep(TabRealizeMs);   // let the heatmaps re-render with the shared scale
+            Console.WriteLine($"DIFF/WL: shared W/L set -> min={wlMin.Text} max={wlMax.Text}");
+
+            string shot = Path.Combine(screensDir, "p1_diff_wl.png");
+            CaptureWindow(window, shot);
+            if (!File.Exists(shot))
+            {
+                Console.WriteLine("DIFF/WL: FAIL screenshot not written: " + shot);
+                return false;
+            }
+            Console.WriteLine("DIFF/WL: PASS three-heatmap shared-W/L screenshot written: " + shot);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"DIFF/WL: FAIL exception {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
