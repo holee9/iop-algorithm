@@ -215,6 +215,68 @@ public sealed record RegisteredArmResult(
                0.0, 0.0, 0.0, 0.0, 0.0, null, null, null, 0.0);
 }
 
+/// <summary>
+/// Result of a QUARANTINE registered MULTI-STAGE pipeline run (SPEC-REALDATA-001,
+/// feat/xseam-ui-expand): the golden <c>offset -&gt; gain</c> subsequence of
+/// <c>CANONICAL_ORDER</c> executed by <c>pipeline.orchestrator.run_pipeline</c> on the
+/// REAL edrogi 아크릴 acquisition frame using a calib_map of the REAL CalibSets built from
+/// the registered sources — offset from <c>MasterDark.raw</c> (<c>build_offset_calibset</c>)
+/// and gain from the representative <c>CalSet_19008.raw</c> (<c>build_gain_calibset</c>).
+/// Both carry panel_id <c>SAMPLE-EDROGI-16BIT</c> so the orchestrator's mutual-panel entry
+/// gate passes. Mirrors how <c>tests/pipeline/</c> drives the orchestrator (a subsequence of
+/// CANONICAL_ORDER + a validation-mode input frame so per-stage intermediates are preserved,
+/// DATA-5). [HARD] NON-AUTHORITATIVE plumbing/sanity: proves the multi-stage chain EXECUTES
+/// on a real 3072x3072 frame with real calibs and yields finite, non-degenerate output —
+/// never a numeric golden (no tolerance fitted, no reference).
+///
+/// Because both calibs are REAL, the composed correction is MEANINGFUL:
+/// <see cref="MaxAbsChangeFromInput"/> (engine-computed max|output-input| over the full-res
+/// golden output) is &gt; 0. <see cref="StagesRun"/> is read from the golden history chain
+/// (proving the canonical offset-then-gain order); <see cref="IntermediateCount"/> is the
+/// number of per-stage intermediates the orchestrator preserved under validation_mode. Every
+/// value here is computed ENGINE-side (numpy over the golden output); the ~512x512 before/after
+/// previews and the signed (after - before) <see cref="DiffPreview"/> are computed ENGINE-side
+/// (the UI performs no DSP and no downsampling, SPEC-VIEWER-001 C-09/C-11). When the sample
+/// tree is absent (<see cref="ImagesPresent"/> == false) the previews are null and the numeric
+/// fields are zero — the engine returns cleanly rather than throwing.
+/// </summary>
+public sealed record RegisteredPipelineResult(
+    bool ImagesPresent,
+    bool Sane,
+    string Status,
+    string SignalName,
+    string OffsetCalibName,
+    string GainCalibName,
+    string[] StagesRun,
+    int IntermediateCount,
+    int Rows,
+    int Cols,
+    string Dtype,
+    bool Finite,
+    double Std,
+    double OutputMin,
+    double OutputMax,
+    double OutputMean,
+    double MaxAbsChangeFromInput,
+    FrameData? BeforePreview,
+    FrameData? AfterPreview,
+    FrameData? DiffPreview,
+    double MaxAbsDiff)
+{
+    /// <summary>The sample acquisition tree is absent — a clean, non-throwing verdict.</summary>
+    public static RegisteredPipelineResult Absent(string edrogiRoot)
+        => new(false, false,
+               "QUARANTINE 배관/sanity (수치 golden 아님): real images absent — " + edrogiRoot,
+               "", "MasterDark.raw", "CalSet_19008.raw", Array.Empty<string>(), 0,
+               0, 0, "", false, 0.0, 0.0, 0.0, 0.0, 0.0, null, null, null, 0.0);
+
+    /// <summary>A clean, non-throwing pipeline-failure verdict (e.g. no signal raw, gate refusal).</summary>
+    public static RegisteredPipelineResult Failed(string status)
+        => new(true, false, status, "", "MasterDark.raw", "CalSet_19008.raw",
+               Array.Empty<string>(), 0, 0, 0, "", false,
+               0.0, 0.0, 0.0, 0.0, 0.0, null, null, null, 0.0);
+}
+
 // -- Viewer P0 loop DTOs (SPEC-XSEAM-001 feat/xseam-ui-expand) ----------------
 // The usable algorithm-verification loop: open an arbitrary test image -> process
 // it -> view before/after -> save the result. All three DTOs are CLR-only (no

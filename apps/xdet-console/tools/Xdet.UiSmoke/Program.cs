@@ -12,12 +12,16 @@ namespace Xdet.UiSmoke;
 /// wait for the embedded-Python engine to reach "ready", then for each tab
 /// select -> click -> assert the tab's info TextBlock updates to a non-error value,
 /// and CAPTURE a PNG screenshot of the window AFTER each action completes. Exit code 0
-/// iff Offset, MTF, Pipeline and Real Image all PASS. Requires an interactive desktop.
+/// iff MTF, Pipeline and Real Image all PASS (plus the Viewer registered arms + P0 loop).
+/// Requires an interactive desktop.
 ///
-/// The Real Image tab runs the QUARANTINE plumbing/sanity offset on a REAL edrogi
-/// 3072x3072 frame (SPEC-REALDATA-001) — it loads a ~18M-pixel raw, so it gets a
-/// generous per-action budget. Screenshots (offset/mtf/pipeline/realimage + a ready
-/// overview) are written to apps/xdet-console/_screens/ (a build artifact, gitignored).
+/// The Pipeline tab runs the REAL registered offset->gain pipeline on the edrogi 3072x3072
+/// frame with REAL calibs, and the Real Image tab runs the QUARANTINE plumbing/sanity offset
+/// on a REAL edrogi 3072x3072 frame (SPEC-REALDATA-001) — both load an ~18M-pixel raw, so
+/// they get a generous per-action budget. MTF is the only remaining SYNTHETIC tab (the
+/// registered set has no slanted edge; real MTF is blocked on the guiding set, #33).
+/// Screenshots (mtf/pipeline_registered/realimage + the registered arms, viewer loop, and a
+/// ready overview) are written to apps/xdet-console/_screens/ (a build artifact, gitignored).
 /// </summary>
 internal static class Program
 {
@@ -92,12 +96,16 @@ internal static class Program
             //    a screenshot AFTER the action completes. Lookup is by AutomationId
             //    (order-independent; we key on ids, not XAML tab position). The Real
             //    Image tab loads a real 3072² raw so it gets the generous budget.
-            bool offset = RunTab(window, cf, "OFFSET", "OffsetTab", "OffsetButton", "OffsetInfo",
-                "offset error", ActionTimeoutSec, Path.Combine(screensDir, "offset.png"));
+            // MTF is the only remaining SYNTHETIC tab (registered set has no slanted edge, #33).
             bool mtf = RunTab(window, cf, "MTF", "MtfTab", "MtfButton", "MtfInfo",
                 "MTF error", ActionTimeoutSec, Path.Combine(screensDir, "mtf.png"));
+            // Pipeline now runs the REAL registered offset->gain pipeline on the edrogi 3072²
+            // frame with REAL calibs (MasterDark + CalSet_19008), so it loads real data + runs
+            // two golden stages -> use the generous budget and capture pipeline_registered.png
+            // (real before/after/diff). Cleanly PASSes (info updates, no error) when the sample
+            // tree is absent (RunRegisteredPipeline returns an images-absent verdict).
             bool pipeline = RunTab(window, cf, "PIPELINE", "PipelineTab", "PipelineButton", "PipelineInfo",
-                "pipeline error", ActionTimeoutSec, Path.Combine(screensDir, "pipeline.png"));
+                "pipeline error", RealImageTimeoutSec, Path.Combine(screensDir, "pipeline_registered.png"));
             bool realImage = RunTab(window, cf, "REALIMAGE", "RealImageTab", "RealImageButton", "RealImageInfo",
                 "real image error", RealImageTimeoutSec, Path.Combine(screensDir, "realimage.png"));
 
@@ -119,7 +127,7 @@ internal static class Program
             bool viewer = RunViewer(window, cf, screensDir, viewerOpenPath, viewerSavePath);
 
             Console.WriteLine();
-            bool all = offset && mtf && pipeline && realImage && registered && diffWl && viewer;
+            bool all = mtf && pipeline && realImage && registered && diffWl && viewer;
             Console.WriteLine("=== RESULT: " + (all ? "ALL PASS" : "FAIL") + " ===");
             return all ? 0 : 1;
         }

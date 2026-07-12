@@ -23,7 +23,8 @@ public partial class MainWindow : Window
     // ComputeMtf (the durable interface intentionally omits phantom generation).
     private PythonNetXdetEngine? _engine;
 
-    // The durable seam surface. Offset + MTF are driven exclusively through this
+    // The durable seam surface. The registered arms, the registered offset->gain pipeline,
+    // the MTF metric and the Viewer P0 loop are all driven exclusively through this
     // interface, keeping the UI dependent on the contract, not the Python adapter.
     private IXdetEngine? Seam => _engine;
 
@@ -32,12 +33,14 @@ public partial class MainWindow : Window
     // SWR-601 [B] default raw saturation threshold (0.98 of the 16-bit full scale).
     private const double RawSaturationThreshold = 0.98 * 65535.0;
 
-    // The three before/after/diff comparison groups (feat/xseam-ui-expand). Each owns its
+    // The two before/after/diff comparison groups (feat/xseam-ui-expand). Each owns its
     // tab's before/after/diff heatmaps + shared W/L inputs + hover probe (SPEC-VIEWER-001
     // C-01/C-03/C-06). Constructed after InitializeComponent so the named XAML elements
     // exist; the engine-computed diff is passed IN — the group never computes DSP (C-09).
+    // The Viewer group renders the registered arms; the Pipeline group renders the
+    // registered offset->gain pipeline. (The old synthetic Offset tab/group was removed —
+    // its bit-exact seam path is still exercised headlessly by the fidelity tests.)
     private readonly CompareGroup _viewerGroup;
-    private readonly CompareGroup _offsetGroup;
     private readonly CompareGroup _pipelineGroup;
 
     public MainWindow()
@@ -46,9 +49,6 @@ public partial class MainWindow : Window
         _viewerGroup = new CompareGroup(
             ViewerBeforePlot, ViewerAfterPlot, ViewerDiffPlot,
             ViewerWlMin, ViewerWlMax, ViewerWlAuto, ViewerProbeLabel);
-        _offsetGroup = new CompareGroup(
-            OffsetInputPlot, OffsetOutputPlot, OffsetDiffPlot,
-            OffsetWlMin, OffsetWlMax, OffsetWlAuto, OffsetProbeLabel);
         _pipelineGroup = new CompareGroup(
             PipelineInputPlot, PipelineOutputPlot, PipelineDiffPlot,
             PipelineWlMin, PipelineWlMax, PipelineWlAuto, PipelineProbeLabel);
@@ -70,42 +70,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OffsetButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryBeginWork()) return;
-        try
-        {
-            var (input, calib) = MakeOffsetCase();
-            var offsetParams = new OffsetParams(RawSaturationThreshold);
-
-            // Seam call: C# -> golden offset.process -> C#. The correction AND the signed
-            // diff are computed ENGINE-side (ComputeDiffPreview subtracts in numpy); the UI
-            // renders input / output / diff and computes nothing itself (SPEC-VIEWER-001 C-09).
-            var (output, diff) = await Task.Run(() =>
-            {
-                FrameData outFrame = Seam!.RunOffset(input, calib, offsetParams);
-                DiffPreviewResult d = Seam!.ComputeDiffPreview(input, outFrame);
-                return (outFrame, d);
-            });
-
-            _offsetGroup.Render(input, output, diff.Diff, diff.MaxAbsDiff,
-                "Offset input", "Offset-corrected (SWR-101~104)");
-
-            OffsetInfo.Text =
-                $"frame {input.Rows}x{input.Cols}  S_th={RawSaturationThreshold:F0}  " +
-                $"out noise(alpha={output.NoiseAlpha:G4}, sigma={output.NoiseSigma:G4})";
-            StatusText.Text = "engine: ready (offset done)";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "offset error: " + ex.Message;
-        }
-        finally
-        {
-            EndWork();
-        }
-    }
-
     private async void MtfButton_Click(object sender, RoutedEventArgs e)
     {
         if (!TryBeginWork()) return;
@@ -124,10 +88,11 @@ public partial class MainWindow : Window
             RenderMtf(MtfPlot, result);
 
             MtfInfo.Text =
+                $"SYNTHETIC edge phantom (등록 세트 슬랜티드 엣지 없음, 실측 MTF는 지침 취득세트 #33 대기)  " +
                 $"edge angle={result.EdgeAngleDeg:F2} deg  " +
                 $"Nyquist={result.NyquistLpmm:F2} lp/mm  " +
                 $"MTF@Nyquist={result.MtfAtNyquist:F3}";
-            StatusText.Text = "engine: ready (MTF done)";
+            StatusText.Text = "engine: ready (MTF done, synthetic phantom)";
         }
         catch (Exception ex)
         {
@@ -139,32 +104,50 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Pipeline tab (feat/xseam-ui-expand): run the REAL <c>offset -&gt; gain</c> subsequence of
+    /// CANONICAL_ORDER on the REGISTERED edrogi 아크릴 3072x3072 frame with a calib_map of the
+    /// REAL CalibSets (MasterDark offset + CalSet_19008 gain) via
+    /// <see cref="IXdetEngine.RunRegisteredPipeline"/>. The engine returns engine-downsampled
+    /// before/after previews + the engine-computed signed diff + stage/stat info (incl. max|delta|,
+    /// proving the REAL composed correction). The UI renders before / after / diff with the shared
+    /// W/L + hover probe and performs no DSP (SPEC-VIEWER-001). QUARANTINE-labeled — never a golden.
+    /// </summary>
     private async void PipelineButton_Click(object sender, RoutedEventArgs e)
     {
         if (!TryBeginWork()) return;
         try
         {
-            var (input, offsetCalib, gainCalib) = MakePipelineCase();
-            var offsetParams = new OffsetParams(RawSaturationThreshold);
-            var gainParams = new GainParams();
+            // Seam call: C# -> golden orchestrator (REAL offset -> gain over the registered
+            // 아크릴 frame + REAL calibs) -> C#. The orchestrator owns stage order + the CalibSet
+            // entry gate; the UI supplies nothing but the click and renders what comes back.
+            RegisteredPipelineResult result = await Task.Run(() => Seam!.RunRegisteredPipeline());
 
-            // Seam call: C# -> golden orchestrator (offset -> gain) -> C#. The
-            // orchestrator owns stage order + the CalibSet entry gate; the UI only
-            // supplies synthetic input/calibs and renders what comes back.
-            PipelineResult result = await Task.Run(() =>
-                Seam!.RunPipeline(input, offsetCalib, offsetParams, gainCalib, gainParams));
+            if (!result.ImagesPresent)
+            {
+                // Honest, non-error verdict when the sample tree is absent.
+                PipelineInfo.Text = result.Status;
+                StatusText.Text = "engine: ready (registered pipeline: images absent)";
+                return;
+            }
 
-            // The diff preview (output - input) is engine-computed (numpy); the UI renders
-            // input / output / diff with a diverging colormap and subtracts nothing (C-09).
-            _pipelineGroup.Render(result.Input, result.Output, result.DiffPreview, result.MaxAbsDiff,
-                "Pipeline input", "After offset -> gain");
+            // The diff preview (after - before) is engine-computed (numpy) over the ~512² previews;
+            // the UI renders before / after / diff with a diverging colormap and subtracts nothing (C-09).
+            if (result.BeforePreview is not null && result.AfterPreview is not null)
+                _pipelineGroup.Render(result.BeforePreview, result.AfterPreview,
+                    result.DiffPreview, result.MaxAbsDiff,
+                    "REAL signal (QUARANTINE, ~512² preview)",
+                    "After REAL offset → gain (QUARANTINE, ~512² preview)");
 
-            // All numbers are engine-computed (golden/numpy), not derived in the UI.
+            // All numbers are engine-computed (golden/numpy) — the UI derives nothing.
             PipelineInfo.Text =
-                $"stages: {string.Join(" -> ", result.StagesRun)}  " +
-                $"out[min={result.OutputMin:F1}, max={result.OutputMax:F1}, mean={result.OutputMean:F1}]  " +
-                $"max|delta|={result.MaxAbsChangeFromInput:F1}";
-            StatusText.Text = "engine: ready (pipeline done)";
+                $"{result.Status}  file={result.SignalName}  calibs={result.OffsetCalibName}+{result.GainCalibName}  " +
+                $"stages: {string.Join(" → ", result.StagesRun)} (intermediates={result.IntermediateCount})  " +
+                $"out[min={result.OutputMin:G4}, max={result.OutputMax:G4}, mean={result.OutputMean:G4}]  " +
+                $"max|delta|={result.MaxAbsChangeFromInput:G4}  sane={result.Sane}";
+            StatusText.Text = result.Sane
+                ? $"engine: ready (registered pipeline done, max|delta|={result.MaxAbsChangeFromInput:G4})"
+                : "engine: ready (registered pipeline ran but SANITY FAILED)";
         }
         catch (Exception ex)
         {
@@ -515,49 +498,6 @@ public partial class MainWindow : Window
         view.Refresh();
     }
 
-    // -- deterministic synthetic offset INPUT (mirrors the fidelity test) ---------
-    // Building test INPUT is not DSP; it is the stimulus fed across the seam.
-    private static (FrameData input, OffsetCalibData calib) MakeOffsetCase(int rows = 32, int cols = 32)
-    {
-        var pixels = new float[rows * cols];
-        var omap = new float[rows * cols];
-        for (int r = 0; r < rows; r++)
-        {
-            for (int c = 0; c < cols; c++)
-            {
-                int i = r * cols + c;
-                pixels[i] = 3000f + r * 3f + c * 1.5f; // above raw floor, below S_th
-                omap[i] = 200f + c * 0.5f;              // static dark map to subtract
-            }
-        }
-        return (FrameData.FromPixels(pixels, rows, cols), new OffsetCalibData(omap, rows, cols));
-    }
-
-    // Synthetic INPUT + calibs for the minimal offset -> gain golden pipeline. Same
-    // frame/O_map as the offset case, plus a flat gain map inside [gain_min, gain_max]
-    // so both stages apply cleanly (no clamp / no invalid-gain flag). Not DSP — the
-    // stimulus fed across the seam.
-    private static (FrameData input, OffsetCalibData offset, GainCalibData gain)
-        MakePipelineCase(int rows = 32, int cols = 32)
-    {
-        var pixels = new float[rows * cols];
-        var omap = new float[rows * cols];
-        var gmap = new float[rows * cols];
-        for (int r = 0; r < rows; r++)
-        {
-            for (int c = 0; c < cols; c++)
-            {
-                int i = r * cols + c;
-                pixels[i] = 3000f + r * 3f + c * 1.5f; // above raw floor, below S_th
-                omap[i] = 200f + c * 0.5f;              // static dark map (offset)
-                gmap[i] = 1.1f;                         // flat gain in [0.5, 2.0] (gain)
-            }
-        }
-        return (FrameData.FromPixels(pixels, rows, cols),
-                new OffsetCalibData(omap, rows, cols),
-                new GainCalibData(gmap, rows, cols));
-    }
-
     // -- UI busy-state guard ------------------------------------------------------
 
     private bool TryBeginWork()
@@ -569,7 +509,6 @@ public partial class MainWindow : Window
         }
         if (_busy) return false;
         _busy = true;
-        OffsetButton.IsEnabled = false;
         MtfButton.IsEnabled = false;
         PipelineButton.IsEnabled = false;
         RealImageButton.IsEnabled = false;
@@ -583,7 +522,6 @@ public partial class MainWindow : Window
     private void EndWork()
     {
         _busy = false;
-        OffsetButton.IsEnabled = true;
         MtfButton.IsEnabled = true;
         PipelineButton.IsEnabled = true;
         RealImageButton.IsEnabled = true;

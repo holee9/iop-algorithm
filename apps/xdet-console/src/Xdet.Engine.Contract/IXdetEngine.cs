@@ -88,6 +88,30 @@ public interface IXdetEngine
     /// </summary>
     RegisteredArmResult RunRegisteredArm(string kind);
 
+    /// <summary>
+    /// [HARD] QUARANTINE plumbing/sanity ONLY (SPEC-REALDATA-001, feat/xseam-ui-expand). Run a
+    /// REAL MULTI-STAGE golden pipeline — the <c>offset -&gt; gain</c> subsequence of the
+    /// orchestrator's <c>CANONICAL_ORDER</c> — over the REAL edrogi 아크릴 acquisition frame via
+    /// <c>pipeline.orchestrator.run_pipeline</c> with a calib_map of the REAL CalibSets:
+    /// <list type="bullet">
+    ///   <item>offset: <c>ing.build_offset_calibset(_load_full("16bit cal/MasterDark.raw"))</c>;</item>
+    ///   <item>gain:   <c>ing.build_gain_calibset(_load_full("16bit cal/CalSet_19008.raw"))</c>;</item>
+    /// </list>
+    /// both panel_id <c>SAMPLE-EDROGI-16BIT</c> so the orchestrator's mutual-panel entry gate
+    /// passes. Mirrors how <c>tests/pipeline/</c> drives the orchestrator: a subsequence of
+    /// CANONICAL_ORDER via <c>PipelineDefinition</c>, a registry of the module <c>process</c>
+    /// callables, and a validation-mode input frame so per-stage intermediates are preserved
+    /// (DATA-5). Both stages use <c>tests.modules.phantoms.corrections.corr_params()</c>.
+    /// Because the calibs are REAL the composed correction is MEANINGFUL
+    /// (<see cref="RegisteredPipelineResult.MaxAbsChangeFromInput"/> &gt; 0). Returns the sanity
+    /// verdict (shape/dtype/finite/std) + engine-computed stats + engine-downsampled ~512x512
+    /// before/after previews + the engine-computed signed diff. When the sample tree is absent,
+    /// returns a result with <see cref="RegisteredPipelineResult.ImagesPresent"/> == false (no
+    /// exception). All DSP + downsampling happen engine-side (SPEC-VIEWER-001). NON-AUTHORITATIVE
+    /// — never a numeric golden.
+    /// </summary>
+    RegisteredPipelineResult RunRegisteredPipeline();
+
     // -- Viewer P0 loop: open arbitrary image -> process -> save (usable) ------
     // The adapter holds the loaded / processed frame as state ACROSS these three
     // calls (LoadRawFrame sets it, ProcessLoadedFrame consumes+updates it,

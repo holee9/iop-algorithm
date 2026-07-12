@@ -432,6 +432,162 @@ public sealed class PythonNetXdetEngine : IXdetEngine
         }
     }
 
+    /// <summary>
+    /// [HARD] QUARANTINE plumbing/sanity ONLY. REAL multi-stage generalization of
+    /// <see cref="RunRegisteredArm"/>: the golden <c>offset -&gt; gain</c> subsequence of
+    /// <c>CANONICAL_ORDER</c> run through <c>pipeline.orchestrator.run_pipeline</c> on the REAL
+    /// 아크릴 signal with a calib_map of the REAL CalibSets — offset from <c>MasterDark.raw</c>
+    /// (<c>ing.build_offset_calibset</c>) and gain from the representative CalSet
+    /// (<c>ing.build_gain_calibset</c>). Both carry panel_id <c>SAMPLE-EDROGI-16BIT</c> so the
+    /// orchestrator's mutual-panel entry gate passes. Mirrors how <c>tests/pipeline/</c> drives
+    /// the orchestrator (a <c>PipelineDefinition</c> subsequence + a process-callable registry +
+    /// a validation-mode input frame so per-stage intermediates are preserved, DATA-5). Nothing
+    /// is fitted, tuned, or treated as a numeric golden. Because both calibs are REAL the composed
+    /// correction is MEANINGFUL (max|output-input| &gt; 0). All stats + downsampled before/after
+    /// previews + the signed diff are engine-side (SPEC-VIEWER-001).
+    /// </summary>
+    public RegisteredPipelineResult RunRegisteredPipeline()
+    {
+        EnsureInitialized();
+        using (Py.GIL())
+        {
+            dynamic np = Py.Import("numpy");
+            dynamic builtins = Py.Import("builtins");
+            dynamic pathlib = Py.Import("pathlib");
+            dynamic ing = Py.Import("scripts.ingest_edrogi");
+            dynamic corrections = Py.Import("tests.modules.phantoms.corrections");
+            dynamic xframe = Py.Import("common.xframe");
+            dynamic orchestrator = Py.Import("pipeline.orchestrator");
+            dynamic offsetMod = Py.Import("modules.offset");
+            dynamic gainMod = Py.Import("modules.gain");
+
+            // Registered calib source names: offset := MasterDark, gain := the representative
+            // CalSet (from ing.REPRESENTATIVE_CALSET so it stays in lockstep with test_tc_002).
+            string offsetCalibName = "MasterDark.raw";
+            string gainCalibName = ((PyObject)ing.REPRESENTATIVE_CALSET).As<string>() + ".raw";
+
+            // Absolute edrogi root (CWD-independent), reusing edrogi_available verbatim.
+            string edrogiRoot = Path.Combine(FindRepoRoot(), "images", "에드로지16BIT");
+            bool available = ((PyObject)ing.edrogi_available(edrogiRoot)).As<bool>();
+            if (!available)
+                return RegisteredPipelineResult.Absent(edrogiRoot);
+            ing.require_edrogi(edrogiRoot);
+
+            // signal := first non-"_result" raw under 아크릴 (mirror of the arm's _first_raw:
+            // sorted(rglob("*.raw")), skip vendor "_result.raw" outputs).
+            dynamic acrylicDir = pathlib.Path(Path.Combine(edrogiRoot, "아크릴"));
+            PyObject sortedRaws = (PyObject)builtins.sorted(acrylicDir.rglob("*.raw"));
+            string signalFull = "";
+            string signalName = "";
+            long nRaw = sortedRaws.Length();
+            for (long i = 0; i < nRaw; i++)
+            {
+                using PyObject p = sortedRaws[(int)i];
+                string name = ((PyObject)p.GetAttr("name")).As<string>();
+                if (!name.EndsWith("_result.raw", StringComparison.Ordinal))
+                {
+                    signalFull = p.ToString() ?? "";
+                    signalName = name;
+                    break;
+                }
+            }
+            if (signalFull.Length == 0)
+                return RegisteredPipelineResult.Failed(
+                    "QUARANTINE 배관/sanity (수치 golden 아님): no signal raw under 아크릴");
+
+            try
+            {
+                // Load the signal + build the REAL offset/gain CalibSets EXACTLY as the frozen
+                // arms do (test_tc_001/002): _load_full -> build_{offset,gain}_calibset.
+                dynamic signal = ing._load_full(pathlib.Path(signalFull));
+                string masterdarkFull = Path.Combine(edrogiRoot, "16bit cal", offsetCalibName);
+                string calsetFull = Path.Combine(edrogiRoot, "16bit cal", gainCalibName);
+                dynamic offsetCalib = ing.build_offset_calibset(ing._load_full(pathlib.Path(masterdarkFull)));
+                dynamic gainCalib = ing.build_gain_calibset(ing._load_full(pathlib.Path(calsetFull)));
+
+                // validation-mode input frame: run_pipeline preserves per-stage intermediates
+                // (DATA-5) only when frame.validation_mode is set. new_frame(..., validation_mode=True)
+                // is keyword-only, so pass it via kwargs.
+                PyObject newFrameFunc = (PyObject)xframe.new_frame;
+                using var nfKwargs = new PyDict();
+                using (PyObject pyTrue = true.ToPython())
+                    nfKwargs["validation_mode"] = pyTrue;
+                dynamic inputFrame = newFrameFunc.Invoke(new[] { (PyObject)signal.pixel }, nfKwargs);
+
+                // Drive the orchestrator exactly like tests/pipeline: a PipelineDefinition that
+                // is a subsequence of CANONICAL_ORDER, a registry of the module process callables,
+                // a calib_map of the REAL CalibSets, and a params_map (corr_params for both stages).
+                // run_pipeline owns the canonical order + the CalibSet entry gate.
+                using var stagesTuple = new PyTuple(new PyObject[] { new PyString("offset"), new PyString("gain") });
+                dynamic definition = orchestrator.PipelineDefinition(stagesTuple);
+                using var registry = new PyDict();
+                registry["offset"] = (PyObject)offsetMod.process;   // process CALLABLE, not the module
+                registry["gain"] = (PyObject)gainMod.process;
+                using var calibMap = new PyDict();
+                calibMap["offset"] = (PyObject)offsetCalib;
+                calibMap["gain"] = (PyObject)gainCalib;
+                dynamic corrParams = corrections.corr_params();
+                using var paramsMap = new PyDict();
+                paramsMap["offset"] = (PyObject)corrParams;
+                paramsMap["gain"] = (PyObject)corrParams;
+
+                dynamic outFrame = orchestrator.run_pipeline(
+                    inputFrame, definition, registry, calibMap, paramsMap);
+
+                // Sanity verdict (_assert_sane), engine-side over the golden output.
+                PyObject outPix = (PyObject)outFrame.pixel;
+                PyObject inPix = (PyObject)signal.pixel;
+                PyObject shape = (PyObject)outFrame.pixel.shape;
+                int rows = ((PyObject)shape[0]).As<int>();
+                int cols = ((PyObject)shape[1]).As<int>();
+                string dtype = ((PyObject)outFrame.pixel.dtype.name).As<string>();
+                bool finite = ItemAsBool(np.all(np.isfinite(outPix)));
+                double std = ItemAsDouble(np.std(outPix));
+                double outMin = ItemAsDouble(np.min(outPix));
+                double outMax = ItemAsDouble(np.max(outPix));
+                double outMean = ItemAsDouble(np.mean(outPix));
+                bool sane = rows == 3072 && cols == 3072 && dtype == "float32" && finite && std > 0.0;
+
+                // Engine-computed proof the REAL offset->gain chain actually changed the frame.
+                dynamic diffAbs = np.abs(np.subtract(np.asarray(outPix, np.float64), np.asarray(inPix, np.float64)));
+                double maxAbsChange = ItemAsDouble(np.max(diffAbs));
+
+                // Stages actually run (golden history chain) + the count of preserved
+                // per-stage intermediates (validation_mode / DATA-5) — both read from the golden.
+                string[] stages = StagesFromHistory(outFrame);
+                int intermediateCount = (int)((PyObject)outFrame.intermediates).Length();
+
+                // Engine-side ~512x512 block-mean before/after previews (UI does no DSP) + the
+                // ENGINE-computed signed (after - before) diff preview (C-06). The diff
+                // subtraction happens HERE in numpy, never in the UI (C-09/C-11).
+                PyObject beforeBlock = DownsampleBlock(inPix, np, builtins, 512);
+                PyObject afterBlock = DownsampleBlock(outPix, np, builtins, 512);
+                FrameData before = FrameDataFromBlock(beforeBlock, np);
+                FrameData after = FrameDataFromBlock(afterBlock, np);
+                FrameData diffPreview = MakeDiffPreview(beforeBlock, afterBlock, np, out double maxAbsDiff);
+
+                string status = sane
+                    ? $"QUARANTINE 배관/sanity (수치 golden 아님): offset->gain EXECUTED on real {rows}x{cols} "
+                      + $"frame with REAL calibs ({offsetCalibName} + {gainCalibName}); "
+                      + $"stages={string.Join("->", stages)}, intermediates={intermediateCount}, "
+                      + $"finite={finite}, std={std:G4} (>0), dtype={dtype}, "
+                      + $"max|delta|={maxAbsChange:G4} (>0 = real correction)"
+                    : $"QUARANTINE 배관/sanity (수치 golden 아님): offset->gain SANITY FAILED "
+                      + $"(shape={rows}x{cols}, dtype={dtype}, finite={finite}, std={std:G4})";
+
+                return new RegisteredPipelineResult(
+                    true, sane, status, signalName, offsetCalibName, gainCalibName,
+                    stages, intermediateCount, rows, cols, dtype, finite, std,
+                    outMin, outMax, outMean, maxAbsChange, before, after, diffPreview, maxAbsDiff);
+            }
+            catch (Exception ex)
+            {
+                return RegisteredPipelineResult.Failed(
+                    "QUARANTINE 배관/sanity (수치 golden 아님): registered pipeline error: " + ex.Message);
+            }
+        }
+    }
+
     // -- Viewer P0 loop: open arbitrary image -> process -> save --------------
 
     public LoadedFrameInfo LoadRawFrame(string path, int rows = 0, int cols = 0)

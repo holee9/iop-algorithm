@@ -23,7 +23,8 @@
                  (labeled, never a numeric golden). Save applies the C-20 write guard
                  engine-side. The arbitrary "Open image..." path is retained as SECONDARY.
                  The UI does no DSP and no downsampling (SPEC-VIEWER-001). -->
-            <TabItem Header="Viewer" AutomationProperties.AutomationId="ViewerTab">
+            <TabItem Header="Viewer (registered test set)" AutomationProperties.AutomationId="ViewerTab"
+                     IsSelected="True">
                 <DockPanel>
                     <!-- PRIMARY: registered edrogi test set (real signal + real calib). -->
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,8,8,2">
@@ -92,58 +93,20 @@
                 </DockPanel>
             </TabItem>
 
-            <!-- Offset stage (SWR-101~104): the seam runs the golden offset on a
-                 small deterministic synthetic frame; the UI renders the full 2-D
-                 input vs corrected frames as ScottPlot heatmaps. No pixel math is
-                 done here — only array selection and rendering. -->
-            <TabItem Header="Offset" AutomationProperties.AutomationId="OffsetTab">
-                <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
-                        <Button x:Name="OffsetButton" AutomationProperties.AutomationId="OffsetButton"
-                                Content="Run offset (synthetic)"
-                                Click="OffsetButton_Click" Padding="10,4" />
-                        <TextBlock x:Name="OffsetInfo" AutomationProperties.AutomationId="OffsetInfo"
-                                   Margin="12,0,0,0"
-                                   VerticalAlignment="Center" />
-                    </StackPanel>
-                    <!-- Shared Window/Level (C-01): same color range on input + output. -->
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,4">
-                        <TextBlock Text="Shared W/L:" VerticalAlignment="Center" FontWeight="Bold" Margin="0,0,8,0" />
-                        <TextBlock Text="min" VerticalAlignment="Center" Margin="0,0,4,0" />
-                        <TextBox x:Name="OffsetWlMin" AutomationProperties.AutomationId="OffsetWlMin"
-                                 Width="100" VerticalContentAlignment="Center" />
-                        <TextBlock Text="max" VerticalAlignment="Center" Margin="10,0,4,0" />
-                        <TextBox x:Name="OffsetWlMax" AutomationProperties.AutomationId="OffsetWlMax"
-                                 Width="100" VerticalContentAlignment="Center" />
-                        <Button x:Name="OffsetWlAuto" AutomationProperties.AutomationId="OffsetWlAuto"
-                                Content="Auto" Padding="10,2" Margin="10,0,0,0" />
-                    </StackPanel>
-                    <TextBlock x:Name="OffsetProbeLabel" AutomationProperties.AutomationId="OffsetProbeLabel"
-                               DockPanel.Dock="Bottom" Margin="8,2,8,6" TextWrapping="Wrap"
-                               Text="probe (row,col): move mouse over a heatmap" />
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <sp:WpfPlot x:Name="OffsetInputPlot" Grid.Column="0" />
-                        <sp:WpfPlot x:Name="OffsetOutputPlot" Grid.Column="1" />
-                        <sp:WpfPlot x:Name="OffsetDiffPlot" AutomationProperties.AutomationId="OffsetDiffPlot"
-                                    Grid.Column="2" />
-                    </Grid>
-                </DockPanel>
-            </TabItem>
-
-            <!-- Pipeline seam: the golden orchestrator runs the minimal valid
-                 offset -> gain slice of CANONICAL_ORDER on a synthetic frame with
-                 synthetic CalibSet(s). The UI renders input vs output frames as
-                 heatmaps and shows engine-computed stage/stat info. No DSP here. -->
-            <TabItem Header="Pipeline" AutomationProperties.AutomationId="PipelineTab">
+            <!-- Pipeline seam (feat/xseam-ui-expand): the golden orchestrator runs the
+                 REAL offset -> gain subsequence of CANONICAL_ORDER on the REGISTERED edrogi
+                 아크릴 3072x3072 frame with a calib_map of the REAL CalibSets (offset from
+                 MasterDark, gain from CalSet_19008 — both panel_id SAMPLE-EDROGI-16BIT so the
+                 orchestrator entry gate passes), mirroring tests/pipeline (CANONICAL_ORDER
+                 subsequence + validation_mode intermediates). The UI renders the engine-
+                 downsampled before/after/diff heatmaps with the shared W/L + probe and shows
+                 engine-computed stage/stat info (incl. max|delta|). QUARANTINE sanity (labeled,
+                 never a numeric golden). The UI does no DSP and no downsampling (SPEC-VIEWER-001). -->
+            <TabItem Header="Pipeline (registered offset→gain)" AutomationProperties.AutomationId="PipelineTab">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
                         <Button x:Name="PipelineButton" AutomationProperties.AutomationId="PipelineButton"
-                                Content="Run pipeline (synthetic)"
+                                Content="Run registered pipeline (offset→gain, real)"
                                 Click="PipelineButton_Click" Padding="10,4" />
                         <TextBlock x:Name="PipelineInfo" AutomationProperties.AutomationId="PipelineInfo"
                                    Margin="12,0,0,0"
@@ -178,23 +141,6 @@
                 </DockPanel>
             </TabItem>
 
-            <!-- MTF metric (measurement protocol 1.2): the adapter renders the golden
-                 slanted-edge phantom, the seam computes the presampled MTF, and the UI
-                 plots the returned frequency vs MTF curve verbatim. -->
-            <TabItem Header="MTF" AutomationProperties.AutomationId="MtfTab">
-                <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
-                        <Button x:Name="MtfButton" AutomationProperties.AutomationId="MtfButton"
-                                Content="Compute MTF"
-                                Click="MtfButton_Click" Padding="10,4" />
-                        <TextBlock x:Name="MtfInfo" AutomationProperties.AutomationId="MtfInfo"
-                                   Margin="12,0,0,0"
-                                   VerticalAlignment="Center" />
-                    </StackPanel>
-                    <sp:WpfPlot x:Name="MtfPlot" />
-                </DockPanel>
-            </TabItem>
-
             <!-- Real Image (SPEC-REALDATA-001): [HARD] QUARANTINE 배관/sanity ONLY.
                  The seam runs the golden OFFSET stage on a REAL edrogi 3072x3072
                  acquisition frame (via the frozen realdata sample arm) purely to prove
@@ -220,6 +166,30 @@
                         <sp:WpfPlot x:Name="RealImageInputPlot" Grid.Column="0" />
                         <sp:WpfPlot x:Name="RealImageOutputPlot" Grid.Column="1" />
                     </Grid>
+                </DockPanel>
+            </TabItem>
+
+            <!-- MTF metric (measurement protocol 1.2): [HARD] SYNTHETIC ONLY. The registered
+                 edrogi set has NO slanted-edge phantom, so a REAL MTF is not possible here —
+                 it is blocked on the guiding acquisition set (issue #33). This tab keeps the
+                 synthetic path: the adapter renders the golden analytic slanted-edge phantom,
+                 the seam computes its presampled MTF, and the UI plots the returned frequency
+                 vs MTF curve verbatim. Clearly labeled synthetic — it does NOT use registered
+                 data. This is the only user-facing synthetic tab that remains. -->
+            <TabItem Header="MTF (synthetic edge phantom)" AutomationProperties.AutomationId="MtfTab">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                        <Button x:Name="MtfButton" AutomationProperties.AutomationId="MtfButton"
+                                Content="Compute MTF (synthetic phantom)"
+                                Click="MtfButton_Click" Padding="10,4" />
+                        <TextBlock x:Name="MtfInfo" AutomationProperties.AutomationId="MtfInfo"
+                                   Margin="12,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock DockPanel.Dock="Top" Margin="8,0,8,6" TextWrapping="Wrap"
+                               Foreground="#B03030"
+                               Text="합성 엣지 팬텀 — 등록 세트에 슬랜티드 엣지 없음, 실측 MTF는 지침 취득세트(#33) 대기. (SYNTHETIC phantom; NOT registered data.)" />
+                    <sp:WpfPlot x:Name="MtfPlot" />
                 </DockPanel>
             </TabItem>
         </TabControl>
