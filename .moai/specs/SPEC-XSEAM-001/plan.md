@@ -12,6 +12,8 @@ labels: [xseam, productization, csharp-ui, engine-contract, pythonnet]
 
 # SPEC-XSEAM-001 — 구현 계획 (plan)
 
+> **역사적 계획:** 이 계획은 구현된 P1.5 얇은 수직 슬라이스의 원 계획이다. 현재 전체 WPF 확장 순서와 `.NET 9` 계약은 `SPEC-XGUI-MASTER` v0.5.1 후보 및 `SPEC-XSEAM-002/plan.md`가 권위다.
+
 언어 중립 엔진 심 + C# UI 스켈레톤(P1.5 얇은 수직 슬라이스)의 구현 계획. 시간 추정 없음 — Priority(High/Medium/Low)와 단계 순서로만 기술한다. Python 골든 모델은 동결 오라클로 무변경, 작업은 전부 신규 `apps/xdet-console/` C# 솔루션에 additive.
 
 ## 1. 기술 접근 (Technical Approach)

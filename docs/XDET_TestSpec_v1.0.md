@@ -29,8 +29,35 @@
 | XDET-TC-022 | VV-010 | 관찰자 연구 (인허가용 — 프로토콜 별도) | 임상/모사 세트 | EV-204 (인력) |
 | XDET-TC-023~025 | VV-013/014/015 | (Gen 2 예약 — PCCP 동기 상세화) | — | — |
 
+## GUI 사용·검증 시험 레지스트리 (v0.5.1 기준선 후보)
+
+아래 `XDET-TC-096~167`는 `apps/xdet-console/` WPF가 저장소의 모든 대상 알고리즘을 실제 사용·검증하기 위한 중앙 할당이다. `PLANNED`는 SPEC과 인수 기준만 있고 자동 시험 증거는 아직 없다는 뜻이다. 사용자 승인·기준선 동결 전에는 구현 PR이나 신규 자동화 작성을 시작하지 않는다. 승인 뒤 실제 xUnit/integration/ViewModel/UI Automation test name과 TC ID를 1:1로 연결한 뒤에만 상태를 `AUTOMATED` 또는 `UI-AUTOMATED`로 변경한다.
+
+문서 착수 게이트 `DOC-XGUI-GATE-001`은 제품 TC 번호와 분리한다. 이 게이트는 G0 12조건, 승인 버전·일시·범위, 승인 전 비문서 변경 0을 검증하며 통과 전 `XDET-TC-096~167`의 상태 전환을 금지한다.
+
+| TC ID | GUI 그룹 | 상태 | 정본 인수 기준 | 구현 시 필수 증거 |
+|---|---|---|---|---|
+| XDET-TC-096~103 | Calibration | PLANNED | `SPEC-XGUI-CALIB/acceptance.md` | apply 3종, 모든 builder/import, pipeline fidelity, uint8 mask, artifact/manifest/evidence |
+| XDET-TC-104~111 | Lag | PLANNED | `SPEC-XGUI-LAG/acceptance.md` | fresh sequence, snapshot/restore/reset, first-frame/ghost/IRF, frame hashes, cancel safety |
+| XDET-TC-112~119 | Line/Saturation/Geometry | PLANNED | `SPEC-XGUI-LINESATGEO/acceptance.md` | 세 action 개별·조합, actual diag, uint8 mask, 오류·artifact/manifest |
+| XDET-TC-120~127 | Denoise | PLANNED | `SPEC-XGUI-DENOISE/acceptance.md` | dynamic required Params, BM3D/NLM, NOISE gate, noise/NPS/SNR, user input/evidence |
+| XDET-TC-128~135 | Enhancement | PLANNED | `SPEC-XGUI-ENHANCE/acceptance.md` | MSE/window, GSDF LUT, P-value remap, display-domain encoding, artifact/manifest |
+| XDET-TC-136~143 | Grid/Virtual Grid | PLANNED | `SPEC-XGUI-GRID/acceptance.md` | analyze/notch/process, estimate/process, kernel build/fit, provenance/artifact |
+| XDET-TC-144~151 | NDT | PLANNED | `SPEC-XGUI-NDT/acceptance.md` | 7 action, accumulator update/current/target/shot log, report/manifest/evidence |
+| XDET-TC-152~159 | Metrics | PLANNED | `SPEC-XGUI-METRICS/acceptance.md` | MTF/NPS/line-noise/defect/DQE/scalar-at, typed DTO, report/manifest |
+| XDET-TC-160 | Shared catalog | PLANNED | `SPEC-XGUI-MASTER/algorithm-catalog.md` | target 64 + SAMPLE helper 3 + common infrastructure 6 = qualified callable 73; 세 source 집합·catalog·manifest 차이와 집합 간 중복 0 |
+| XDET-TC-161 | Shared Contract | PLANNED | `SPEC-XSEAM-002/acceptance.md` | catalog ACTION/SESSION − 9-family manifest/handler 집합 차이 0 |
+| XDET-TC-162 | Shared orchestration | PLANNED | `SPEC-XGUI-MASTER/acceptance.md` | generic pipeline/sequence, canonical order, CalibMap/ParamsMap, state/intermediates fidelity |
+| XDET-TC-163 | Shared tier | PLANNED | `SPEC-XSEAM-002/acceptance.md` | decide/select/run/time, forced upgrade 거부, downgrade 허용, structural timing |
+| XDET-TC-164 | Shared DQE | PLANNED | `SPEC-XGUI-METRICS/acceptance.md` | `mtf_value_at`→`compute_dqe`, support bin, no extrapolation/clamp/UI DSP, provenance |
+| XDET-TC-165 | Shared IO/calibration | PLANNED | `SPEC-XGUI-MASTER/acceptance.md` | builder validation, frame uint16/mask uint8, C-20, round-trip/reproducibility/hash |
+| XDET-TC-166 | Shared state/evidence | PLANNED | `SPEC-XGUI-MASTER/acceptance.md` | availability/evidence 분리, strict user input, 무단 golden 승격 0 |
+| XDET-TC-167 | Shared GUI reachability | PLANNED | `SPEC-XGUI-MASTER/acceptance.md` | 모든 ACTION/SESSION FeatureId에 enabled/typed-error GUI command와 AutomationId 존재 |
+
 ## 운용
 
-1. TC-001~021은 CI 회귀 스위트 등록 — 커밋 트리거 자동 실행, min 미달 시 머지 차단 (P1 계획서 §3).
-2. GDS 세트 ID는 골든 데이터셋 레포 태그와 1:1 — 데이터 변경 = 재베이스라인 절차.
-3. TC-022는 인허가 단계 실행 (개발 게이트 아님).
+1. TC-001~021은 기존 알고리즘 수치 회귀 스위트이며 GUI TC와 대체 관계가 아니다.
+2. GDS 세트 ID는 golden dataset tag와 1:1이며 데이터 변경은 재베이스라인 절차를 따른다.
+3. TC-022는 인허가 단계 실행이며 개발 게이트가 아니다.
+4. GUI TC-096~167은 `PLANNED` 동안 CI 통과 수에 포함하지 않는다. 실제 test name·로그·artifact가 등록된 TC만 완료로 보고한다.
+5. 새 public ACTION/SESSION이 추가되면 TC-160/161/167이 실패하고 catalog·seam·GUI·시험을 함께 갱신해야 한다.

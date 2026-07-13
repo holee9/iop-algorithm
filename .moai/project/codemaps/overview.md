@@ -18,9 +18,9 @@ X-ray FPD(CsI, 140µm, 3072×3072 / 3072×2560, 16-bit raw) 영상처리 SW의 P
 | `modules/` | WP1~WP9 처리 모듈(`process(...)` 계약 구현) + 기본 레지스트리 | 14 |
 | `pipeline/` | 오케스트레이터, 연속캡처 시퀀스, 티어 게이팅 | 4 |
 | `metrics/` | MTF/NPS·NNPS/DQE/lag/bad-pixel/NDT 등 지표 산출 엔진 + 오프라인 CalibSet 빌더 | 12 |
-| `apps/` | GUI 뷰어(qtpy→PySide6+pyqtgraph), 유일한 실행 애플리케이션 | 14 |
+| `apps/` | 제품화 `.NET 9 WPF` 앱(`xdet-console`, 현재 14 C# + 2 XAML 수직 슬라이스)과 역사적 Python 검증 GUI(`gui`, 13 Python source) | 29 |
 | `scripts/` | 데이터 인제스트/스파이크 CLI 도구 (골든 모델 패키지 외부) | 3 |
-| **합계** | | **59** |
+| **합계** | | **74** |
 
 패키지별 상세 카탈로그는 [modules.md](./modules.md), 의존성 규칙은 [dependencies.md](./dependencies.md) 참조.
 
@@ -37,7 +37,9 @@ X-ray FPD(CsI, 140µm, 3072×3072 / 3072×2560, 16-bit raw) 영상처리 SW의 P
 ```mermaid
 flowchart TB
     subgraph Apps["실행 계층"]
-        GUI["apps/gui — MainWindow<br/>(qtpy→PySide6+pyqtgraph)"]
+        WPF["apps/xdet-console — .NET 9 WPF<br/>(현재 제품화 대상)"]
+        Seam["Xdet.Engine.Contract → PythonNet<br/>(유일한 WPF 실행 경계)"]
+        GUI["apps/gui — Python 검증 MainWindow<br/>(역사적 회귀 선례)"]
         Scripts["scripts/ — CLI 인제스트/스파이크<br/>(골든모델 패키지 외부)"]
     end
 
@@ -51,6 +53,11 @@ flowchart TB
         Common["common/ — XFrame·CalibSet·Params<br/>공용 컴포넌트 5종·raw I/O"]
     end
 
+    WPF --> Seam
+    Seam --> Metrics
+    Seam --> Modules
+    Seam --> Pipeline
+    Seam --> Common
     GUI --> Metrics
     GUI --> Modules
     GUI --> Pipeline

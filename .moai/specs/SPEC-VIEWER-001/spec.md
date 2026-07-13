@@ -13,6 +13,8 @@ labels: [gui, viewer, verification-tool]
 
 # SPEC-VIEWER-001 — 검증 GUI: 단위 모듈 검증기 + 파이프라인 비교 뷰어 (단계형 Phase 0 → 0.5 → 1 → 2)
 
+> **현재 위치:** 이 SPEC은 2026-07-10 구현된 `apps/gui/` Python 검증 도구의 정본 기록이다. 2026-07-13 이후 목적별 GUI 신규 구현의 기준선 후보는 `SPEC-XGUI-MASTER` v0.5.1이며 대상은 `apps/xdet-console/` WPF다. 본 도구는 동작·회귀 선례로 보존되지만 WPF의 실행 경계로 import하거나 확장하지 않는다. v0.5.1 사용자 승인·동결 전 신규 구현은 금지된다.
+
 XDET 영상처리 SW P1(11개 SPEC, T0~T10, `common/ modules/ pipeline/ metrics/` 4계층 순수 라이브러리)의 **검증용 GUI**를 `apps/gui/` 서브 프로젝트로 도입한다. raw 파일을 열어 보정 전/후 결과를 눈으로 확인·비교하는 재현 가능한 사용자 진입점이 현재 pytest뿐이라는 문제(이슈 #14)를 해결한다. 본 SPEC은 두 능력을 하나의 앱(탭/도크 전환)·하나의 SPEC에서 **단계형**으로 제공한다 — **Phase 1** 단위 모듈 검증기(fixture/raw 입력 → 모듈 1개 실행 → 입력·출력·diff·마스크 시각화, 출력 XFrame은 `common/contract.py`의 `ProcessModule.process`가 직접 산출하고 expected 골든이 동봉된 fixture에서만 `run_harness` 검증을 병행), **Phase 2** 파이프라인 비교 뷰어(raw+CalibSet → `CANONICAL_ORDER` 부분/전체 실행 → 스테이지별 전/후 + 지표 플롯). GUI는 **읽기-실행 전용**(C-20)이며 **지표를 자체 계산하지 않고**(C-09) 기존 `metrics/` 엔진 결과만 표시한다.
 
 **본 SPEC은 골든 모델 처리 모듈이 아니라 검증 도구다.** SWR ID에 대응하는 파이프라인 스테이지를 신설하지 않으며, `common/modules/pipeline/metrics`를 **단방향으로 import만 하는 소비자**로서 코어 4계층의 아키텍처 계약(SWR-000-6~12)과 오케스트레이터 표면(`CANONICAL_ORDER`)을 변경하지 않는다. 코어는 `apps.gui`를 역참조하지 않으며(C-11, import-linter forbidden 계약 + 의도적 위반 카나리 테스트), GUI 전용 의존성은 `[project.optional-dependencies] gui`로 격리된다(C-12). 요구는 SWR가 아니라 **`docs/GUI_CRITERIA.md`의 품질 기준 카탈로그 C-01~C-20 및 스파이크 게이트 SG-1~SG-3**를 단일 출처로 인용하며, `[T]` 임계 수치는 Params/설정에 외부화한다(측정=판정 분리).

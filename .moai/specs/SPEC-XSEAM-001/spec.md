@@ -12,6 +12,8 @@ labels: [xseam, productization, csharp-ui, engine-contract, pythonnet]
 
 # SPEC-XSEAM-001 — 언어 중립 엔진 심(seam) + C# UI 스켈레톤 (P1.5 제품화 확장 얇은 수직 슬라이스)
 
+> **역사적 기준:** 이 SPEC은 현재 `apps/xdet-console/`에 구현된 P1.5 얇은 수직 슬라이스의 원 설계 기록이다. 초기 `.NET 8` 가정은 실제 소스의 `.NET 9`로 대체됐으며, 전체 알고리즘 GUI 확장의 현재 규범은 `SPEC-XGUI-MASTER` v0.5.1 후보와 `SPEC-XSEAM-002`다. 본 문서의 전체 범위·버전 가정을 신규 구현 기준으로 사용하지 않는다.
+
 XDET 영상처리 SW의 **제품화(productization) 확장 P1.5** 계획이다. 최종 제품은 C++/C# 구조로 이행해야 하므로, 본 SPEC은 (1) 구현 언어에 독립적인 **엔진 심(engine seam)** — C# 인터페이스 `IXdetEngine` + XFrame/CalibSet/Params/MetricResult 직렬화 데이터 계약 — 과 (2) 그 심을 소비하는 **C# UI 스켈레톤**을, 기존 Python 골든 모델은 **동결된 레퍼런스 오라클(frozen oracle)** 로 그대로 둔 채 정의한다. P1.5는 아키텍처를 end-to-end로 증명하는 **얇은 수직 슬라이스**만 만든다: 모듈 1개(`offset`) + 지표 1개(MTF)를 C# UI에서 심을 거쳐 Python 골든으로 구동하고 결과를 표시하며, 그 결과가 Python 골든 직접 출력과 **동일함(fidelity)** 을 단언한다. 본 SPEC은 계획 + 상세 사양 + 인수 기준이며 **구현은 포함하지 않는다**(C++ 미구현).
 
 **심(seam)은 durable(내구) 계약이고 어댑터는 교체 가능하다.** P1.5에서 `IXdetEngine`은 **pythonnet in-process 어댑터**(`PythonNetXdetEngine`)로 실현되어 **실제 Python 골든 엔진**(`modules.offset.process`, `metrics.mtf.compute_mtf`)을 호출한다 — DSP를 C#에서 재구현하지 않는다. 이후 P2에서 **C++ ABI 위의 `NativeXdetEngine`** 가 동일한 `IXdetEngine`을 구현하므로 UI는 바뀌지 않으며, C++ 포트는 T10/XDET-TC-020~021 동일성 프레임(정수 경로 bit-동일 / 부동소수점 경로 ±1 LSB)을 적합성 게이트로 통과해야 한다.

@@ -12,6 +12,8 @@ labels: [xseam, productization, csharp-ui, engine-contract, pythonnet]
 
 # SPEC-XSEAM-001 — 인수 기준 (acceptance)
 
+> **역사적 인수기준:** XDET-TC-080~087과 얇은 수직 슬라이스의 회귀 기준으로만 유지한다. 전체 알고리즘 GUI 완료 판정은 `SPEC-XGUI-*`의 XDET-TC-096~167과 `SPEC-XSEAM-002`를 따른다.
+
 얇은 수직 슬라이스(C# UI → 심 → offset.process / MTF → 표시 + fidelity 단언)의 Given-When-Then. 모든 기준은 관측 가능(빌드 성공 / 슬라이스 구동 / fidelity delta 정확히 0 — P1.5 트랜스포트, ±1 LSB envelope는 P2 예약 / 골든 파일 무변경 / Python 스위트 무회귀)해야 한다. 각 시나리오는 XDET-TC-080~087에 귀속한다.
 
 ## Scenarios (Given-When-Then)

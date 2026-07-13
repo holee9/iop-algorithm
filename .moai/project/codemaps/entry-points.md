@@ -6,7 +6,8 @@
 
 | 파일 | 유형 | 책임 |
 |---|---|---|
-| `apps/gui/app.py` | GUI 앱 | `qtpy → PySide6 + pyqtgraph` 기반 `MainWindow`(+`CompareDisplay`). **유일한 실행 애플리케이션.** module/pipeline/metrics 3탭 비교 뷰어. 무거운 연산은 `apps/gui/worker.py`의 `CallableWorker`로 백그라운드 스레드에서 실행해 GUI 스레드를 막지 않음 |
+| `apps/xdet-console/src/Xdet.Console.App/App.xaml` | 제품화 WPF 앱 | `.NET 9 WPF` `MainWindow`. 현재는 Viewer·고정 offset→gain Pipeline·Real Image·합성 MTF 수직 슬라이스이며 `Xdet.Engine.Contract → Xdet.Engine.PythonNet → Python golden` 경계로 실행한다. 전체 확장 규범은 SPEC-XGUI-MASTER v0.5.1 후보와 SPEC-XSEAM-002다. |
+| `apps/gui/app.py` | 역사적 Python 검증 GUI | `qtpy → PySide6 + pyqtgraph` 기반 `MainWindow`(+`CompareDisplay`). module/pipeline/metrics 비교·회귀 선례로 유지하지만 WPF 제품 실행 경계나 신규 확장 대상이 아니다. 무거운 연산은 `apps/gui/worker.py`의 `CallableWorker`로 실행한다. |
 | `scripts/ingest_edrogi.py` | CLI (argparse) | 에드로지16BIT 실측 raw 샘플 세트 인제스트. `images/에드로지16BIT/` → `data/edrogi` 사이드카+manifest+ROI fixture+샘플 CalibSet 생성. **[HARD] QUARANTINE**: 배관(plumbing) 검증 전용, 알고리즘 파라미터([B]/[T]/[P]) 유도 근거로 사용 금지 |
 | `scripts/spike_gui_probe.py` | CLI (헤드리스 스파이크) | Phase-0 napari 프로토타입 검증(SG-1~SG-3 기준). 골든모델 패키지(`common/modules/pipeline/metrics`) 외부이며 import-linter 대상 아님 |
 
@@ -51,14 +52,20 @@
 
 ```mermaid
 flowchart LR
-    User(["사용자"]) --> MainWindow["apps/gui/app.py<br/>MainWindow"]
-    MainWindow --> ModulePanel["module_panel.run_module<br/>(단일 모듈)"]
-    MainWindow --> PipelinePanel["pipeline_panel.run_partial_pipeline<br/>(부분/전체 스테이지)"]
+    User(["사용자"]) --> WpfMain["apps/xdet-console<br/>.NET 9 WPF MainWindow"]
+    WpfMain --> Contract["Xdet.Engine.Contract<br/>IXdetEngine"]
+    Contract --> Adapter["Xdet.Engine.PythonNet"]
+    Adapter --> RunPipeline["pipeline.orchestrator.run_pipeline"]
+    Adapter --> Modules["modules/*.py"]
+    Adapter --> Metrics["metrics/*.py"]
+    User --> PythonMain["apps/gui/app.py<br/>역사적 검증 MainWindow"]
+    PythonMain --> ModulePanel["module_panel.run_module<br/>(단일 모듈)"]
+    PythonMain --> PipelinePanel["pipeline_panel.run_partial_pipeline<br/>(부분/전체 스테이지)"]
     ModulePanel -->|process 직접 호출| Modules["modules/*.py"]
-    PipelinePanel --> RunPipeline["pipeline.orchestrator.run_pipeline"]
+    PipelinePanel --> RunPipeline
     RunPipeline -->|registry.get(stage)| Modules
-    MainWindow --> MetricsPanel["metrics_panel.plot_mtf 등"]
+    PythonMain --> MetricsPanel["metrics_panel.plot_mtf 등"]
     MetricsPanel --> Metrics["metrics/*.py"]
 ```
 
-`module_panel`은 단일 모듈을 직접 호출해 입출력 XFrame 쌍을 비교하며(오케스트레이터 우회, 단일 스테이지 디버깅 목적), `pipeline_panel`은 반드시 `run_pipeline`을 통해 실행한다.
+WPF 제품 앱은 `IXdetEngine`만 호출하고 Python 모듈을 직접 import하지 않는다. Python 검증 GUI의 `module_panel`은 단일 스테이지 디버깅을 위해 모듈을 직접 호출하며, `pipeline_panel`은 반드시 `run_pipeline`을 통한다. 두 앱의 실행 경계를 혼용하지 않는다.

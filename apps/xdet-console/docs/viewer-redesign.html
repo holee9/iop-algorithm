@@ -1,0 +1,702 @@
+<style>
+  :root{
+    --bg:#eef1f4; --surface:#f7f9fb; --panel:#ffffff; --border:#cdd6df;
+    --ink:#1b2530; --muted:#5b6b7b; --faint:#8595a4;
+    --accent:#0e8fa6; --frozen:#b26a00; --seam:#5b57c7; --app:#0e7f9c;
+    --good:#227a52; --warn:#b26a00; --crit:#b23b3b; --grid:#dbe3ea;
+    --canvas-a:#3a4652; --canvas-b:#0f1620;
+    --mono:ui-monospace,"SFMono-Regular","Cascadia Code",Consolas,monospace;
+    --sans:system-ui,"Segoe UI",Roboto,-apple-system,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0d1218; --surface:#131b23; --panel:#18222c; --border:#2a3947;
+      --ink:#e6edf3; --muted:#9fb0c0; --faint:#6f8090;
+      --accent:#38bad0; --frozen:#e0a44a; --seam:#9b97f0; --app:#4fc3dc;
+      --good:#4cc38a; --warn:#e0a44a; --crit:#e06a6a; --grid:#233240;
+      --canvas-a:#1a232d; --canvas-b:#05090d;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f4; --surface:#f7f9fb; --panel:#ffffff; --border:#cdd6df;
+    --ink:#1b2530; --muted:#5b6b7b; --faint:#8595a4;
+    --accent:#0e8fa6; --frozen:#b26a00; --seam:#5b57c7; --app:#0e7f9c;
+    --good:#227a52; --warn:#b26a00; --crit:#b23b3b; --grid:#dbe3ea;
+    --canvas-a:#3a4652; --canvas-b:#0f1620;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1218; --surface:#131b23; --panel:#18222c; --border:#2a3947;
+    --ink:#e6edf3; --muted:#9fb0c0; --faint:#6f8090;
+    --accent:#38bad0; --frozen:#e0a44a; --seam:#9b97f0; --app:#4fc3dc;
+    --good:#4cc38a; --warn:#e0a44a; --crit:#e06a6a; --grid:#233240;
+    --canvas-a:#1a232d; --canvas-b:#05090d;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:clamp(20px,4vw,56px) clamp(16px,4vw,40px)}
+
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 10px}
+  h1{font-size:clamp(24px,4vw,38px);line-height:1.12;margin:0 0 12px;text-wrap:balance;letter-spacing:-.01em}
+  h2{font-size:clamp(18px,2.4vw,23px);margin:46px 0 6px;letter-spacing:-.01em;text-wrap:balance}
+  h2 .n{font-family:var(--mono);color:var(--accent);font-size:.7em;margin-right:.5em}
+  .sub{color:var(--muted);max-width:70ch;margin:0 0 4px}
+  .lede{color:var(--muted);max-width:72ch;font-size:16.5px}
+
+  .frame{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+    padding:clamp(12px,2vw,20px);margin:18px 0}
+  .frame figcaption{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);margin:2px 2px 12px}
+  .scroll{overflow-x:auto}
+  svg{display:block;width:100%;height:auto;min-width:660px}
+
+  .diag{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--muted);
+    border:1px solid var(--border);border-radius:999px;padding:3px 11px}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  td.k{font-family:var(--mono);font-size:12.5px;color:var(--ink);white-space:nowrap}
+  .pill{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:6px;font-weight:600;white-space:nowrap}
+  .keep{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
+  .rebuild{background:color-mix(in srgb,var(--crit) 16%,transparent);color:var(--crit)}
+  .change{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+  .drop{background:color-mix(in srgb,var(--faint) 18%,transparent);color:var(--muted)}
+  .run{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
+  .ph{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+  .blk{background:color-mix(in srgb,var(--faint) 18%,transparent);color:var(--muted)}
+
+  .callout{border-left:3px solid var(--crit);background:color-mix(in srgb,var(--crit) 7%,var(--surface));
+    border-radius:0 10px 10px 0;padding:14px 18px;margin:16px 0}
+  .callout.ok{border-left-color:var(--good);background:color-mix(in srgb,var(--good) 7%,var(--surface))}
+  .callout.seam{border-left-color:var(--seam);background:color-mix(in srgb,var(--seam) 8%,var(--surface))}
+  .callout b{color:var(--ink)}
+  code{font-family:var(--mono);font-size:.88em;background:color-mix(in srgb,var(--accent) 12%,transparent);
+    padding:1px 5px;border-radius:5px;color:var(--ink)}
+  pre{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;
+    font-family:var(--mono);font-size:12.5px;line-height:1.65;color:var(--ink);margin:12px 0}
+  pre .c{color:var(--faint)} pre .kw{color:var(--seam);font-weight:600} pre .fn{color:var(--accent)}
+  hr{border:none;border-top:1px solid var(--border);margin:42px 0}
+  .foot{color:var(--faint);font-size:13px;margin-top:8px}
+  ul{padding-left:20px;color:var(--muted)} li{margin:3px 0}
+
+  /* SVG shared */
+  .box{fill:var(--panel);stroke:var(--border);stroke-width:1.4}
+  .frozenbox{fill:color-mix(in srgb,var(--frozen) 12%,var(--panel));stroke:var(--frozen);stroke-width:1.6}
+  .seambox{fill:color-mix(in srgb,var(--seam) 12%,var(--panel));stroke:var(--seam);stroke-width:1.6}
+  .appbox{fill:color-mix(in srgb,var(--app) 12%,var(--panel));stroke:var(--app);stroke-width:1.6}
+  .rowon{fill:color-mix(in srgb,var(--good) 10%,var(--panel));stroke:var(--good);stroke-width:1.2}
+  .rowmid{fill:color-mix(in srgb,var(--warn) 10%,var(--panel));stroke:var(--warn);stroke-width:1.2}
+  .rowoff{fill:color-mix(in srgb,var(--faint) 7%,var(--panel));stroke:var(--border);stroke-width:1;stroke-dasharray:3 3}
+</style>
+
+<div class="wrap">
+    <p class="eyebrow">SPEC-XGUI-MASTER v0.5.1 · 승인 대기 재설계 방향 자료 · 이슈 #58</p>
+  <h1>C# 검증 뷰어 재설계 — 스테이지 복수 선택·조합 검증</h1>
+    <div class="callout"><b>문서 위치.</b> 이 HTML은 화면 방향을 설명하는 비규범 시각 자료다. 전체 algorithm catalog·9-family 계약·job/cancel·availability/evidence·artifact/run-manifest·인수 기준은 <code>SPEC-XGUI-MASTER v0.5.1</code>과 <code>SPEC-XSEAM-002 v0.5.1</code>이 우선한다. 사용자 승인·기준선 동결 전 구현은 허가되지 않는다.</div>
+  <p class="lede">재설계는 <b>목적(알고리즘 그룹)별 탭</b> 구조다 — 탭을 없애는 게 아니라 "시임 함수"로 갈린 현행 탭을 <b>WP 그룹</b>으로 재편한다. 탭마다 입력세트·파라미터·뷰어가 다르고, 특히 <b>Calibration 탭은 OC·GC·BPM을 세트로 생성 → 촬영영상에 체크박스로 적용</b>하는 워크플로다. 뷰어는 풀해상도 회색조(512² 의사색 폐기).</p>
+
+  <div class="callout ok">
+    <b>핵심 발견.</b> <code>run_pipeline(PipelineDefinition(stages=…), registry, calib_map, params_map, validation_mode)</code>
+    하나로 — (1) 스테이지별 <b>개별 calib 입력</b>(<code>calib_map</code>), (2) <b>임의 정렬 부분집합</b>(<code>CANONICAL_ORDER</code>의 부분수열만),
+    (3) <code>validation_mode</code>→<code>intermediates[]</code>로 <b>단일 실행에서 모든 스테이지 전/후 스크럽</b> — 이 조합 능력이 골든에 이미 존재합니다.
+    <b>알고리즘 변경 0.</b> 갭은 시임(<code>IXdetEngine</code>이 <code>run_pipeline</code> 미러 없음)과 문서(SPEC-XSEAM-001이 조합을 명시적 제외)에만 있습니다.
+  </div>
+
+  <div class="callout">
+    <b>진단 (왜 "히스토그램"인가).</b> ScottPlot이 512² 블록평균을 <b>Viridis 의사색 heatmap</b>으로 렌더 → 회색조 방사선영상이 아님.
+    <b>36배 다운샘플</b>로 검증 대상(bad pixel·line noise·defect 보간)이 화면 도달 전 소실. 탭이 "사용자 과제"가 아니라 "시임 함수"로 갈려 혼란.
+  </div>
+
+  <div class="legend">
+    <span class="diag"><span class="dot" style="background:var(--app)"></span>C# WPF UI (DSP 0 · 요청 빌더)</span>
+    <span class="diag"><span class="dot" style="background:var(--seam)"></span>언어중립 시임 (run_pipeline 미러 신설)</span>
+    <span class="diag"><span class="dot" style="background:var(--frozen)"></span>FROZEN 알고리즘 (골든, 무변경)</span>
+    <span class="diag"><span class="dot" style="background:var(--good)"></span>등록 실측 가용 (offset/gain/defect)</span>
+  </div>
+
+  <!-- ===================== DIAGRAM 0 : OPEN / SAVE user workflow ===================== -->
+  <h2><span class="n">0</span>열기 → 보기 → 적용 → 저장 (사용자 워크플로)</h2>
+  <p class="sub">사용자가 매일 하는 기본 동작이 먼저다 — <b>폴더를 지정해 그 안의 영상을 훑어보고, 결과로 어떤 파일이 어디에 나오는가.</b> 열기는 <b>모달 대화상자가 아니라 상주 폴더 브라우저</b>(폴더 트리 + 썸네일 목록 + 형제 필름스트립 + 이전/다음)여야 한다 — IrfanView·XnView MP·Windows Photos·DICOM 뷰어 공통 구조.</p>
+
+  <div class="callout">
+    <b>현행 as-built 문제 (사용자가 실제로 부딪힘).</b>
+    ① 열기가 <b>파일 하나 고르면 닫히는 모달 대화상자뿐</b> — 폴더를 지정해 그 안의 영상들을 훑어보는 브라우저가 없고, 등록 실측 영상은 3항목 알고리즘 드롭다운(offset/gain/defect)에 숨어 GHOST·nps는 접근 불가.
+    ② 칼리브 결과가 <b>입력과 동일한 <code>&lt;name&gt;_result.raw</code>(+.json)로 안 나옴</b> — 게다가 골든 io에 raw <b>쓰기 함수가 없음</b>(load만, save 없음). 현재는 <code>.npz</code>+<code>.json</code>뿐, 볼 수 있는 영상도 안 나옴.
+    ③ 4개 등록 흐름 중 2개(RegisteredPipeline·RealImageSanity)는 결과를 안 붙잡아 <b>"실행 후 저장"이 조용히 실패</b>. (C-20 가드는 정상)
+  </div>
+
+  <figure class="frame">
+    <figcaption>Fig.0 — 열기(폴더 브라우저: 트리+썸네일+필름스트립) → 저장(Save Result 번들)</figcaption>
+    <div class="scroll">
+      <svg viewBox="0 0 960 420" role="img" aria-label="열기/저장 사용자 워크플로">
+        <defs><marker id="ah0" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker></defs>
+        <!-- OPEN panel : folder browser -->
+        <rect x="14" y="16" width="300" height="388" rx="11" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="30" y="40" font-family="var(--sans)" font-weight="700" font-size="14" fill="var(--ink)">열기 (OPEN) — 폴더 브라우저</text>
+        <text x="30" y="58" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">① 폴더 지정 → 그 폴더의 모든 영상 목록</text>
+        <!-- folder tree -->
+        <rect x="26" y="66" width="276" height="80" rx="7" class="box"/>
+        <g font-family="var(--sans)" font-size="11" fill="var(--ink)">
+          <text x="36" y="82">★ images/에드로지16BIT <tspan font-family="var(--mono)" font-size="8.5" fill="var(--good)">등록(핀)</tspan></text>
+          <text x="48" y="98" fill="var(--muted)">▸ 아크릴 · 16bit cal · GHOST · nps</text>
+          <text x="36" y="118">▸ 임의 폴더… <tspan font-family="var(--mono)" font-size="8.5" fill="var(--faint)">(OpenFolderDialog)</tspan></text>
+          <text x="36" y="136">▸ Recent 폴더 · 마지막 폴더 기억</text>
+        </g>
+        <!-- thumbnail grid -->
+        <text x="30" y="166" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">그 폴더의 모든 영상 (썸네일 목록):</text>
+        <g>
+          <rect x="26" y="174" width="82" height="36" rx="5" fill="url(#film)" stroke="var(--good)"/>
+          <rect x="123" y="174" width="82" height="36" rx="5" fill="url(#film)" stroke="var(--border)"/>
+          <rect x="220" y="174" width="82" height="36" rx="5" fill="url(#film)" stroke="var(--border)"/>
+          <rect x="26" y="216" width="82" height="36" rx="5" fill="url(#film)" stroke="var(--border)"/>
+          <rect x="123" y="216" width="82" height="36" rx="5" fill="url(#film)" stroke="var(--border)"/>
+          <rect x="220" y="216" width="82" height="36" rx="5" fill="var(--panel)" stroke="var(--border)" stroke-dasharray="3 3"/>
+          <text x="261" y="237" text-anchor="middle" font-family="var(--mono)" font-size="8" fill="var(--faint)">shape?</text>
+        </g>
+        <text x="30" y="274" font-family="var(--mono)" font-size="9.5" fill="var(--ink)">② 파일 지정 → 형제 목록 유지</text>
+        <text x="30" y="290" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">←/→ · PageUp/Down · Prev/Next · 필름스트립</text>
+        <text x="30" y="312" font-family="var(--mono)" font-size="9" fill="var(--faint)">raw 썸네일: .json shape + 표시용 W/L</text>
+        <text x="30" y="326" font-family="var(--mono)" font-size="9" fill="var(--faint)">사이드카 없으면 shape 입력(1회, 폴더 일괄)</text>
+        <text x="30" y="348" font-family="var(--mono)" font-size="9" fill="var(--warn)">읽기 전용 — 원본 폴더에 아무것도 안 씀</text>
+        <text x="30" y="364" font-family="var(--mono)" font-size="9" fill="var(--muted)">★ 등록 세트 = 즐겨찾기(핀), 하드코딩 드롭다운 아님</text>
+        <text x="30" y="380" font-family="var(--mono)" font-size="9" fill="var(--faint)">가상화 썸네일 + 비동기 큐 (대용량 폴더)</text>
+
+        <!-- middle flow -->
+        <g font-family="var(--mono)" font-size="10" fill="var(--accent)">
+          <path d="M318,120 L360,120" stroke="var(--accent)" stroke-width="1.8" fill="none" marker-end="url(#ah0)"/>
+          <text x="340" y="112" text-anchor="middle">보기</text>
+          <path d="M318,300 L360,300" stroke="var(--accent)" stroke-width="1.8" fill="none" marker-end="url(#ah0)"/>
+          <text x="340" y="292" text-anchor="middle">적용</text>
+        </g>
+        <rect x="366" y="92" width="86" height="240" rx="9" fill="url(#film)" stroke="var(--border)"/>
+        <text x="409" y="200" text-anchor="middle" fill="#e9eef3" font-family="var(--mono)" font-size="10">캔버스</text>
+        <text x="409" y="216" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="8.5">W/L·zoom</text>
+        <text x="409" y="228" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="8.5">Correction</text>
+        <text x="409" y="240" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="8.5">Stack</text>
+        <path d="M452,210 L494,210" stroke="var(--accent)" stroke-width="1.8" fill="none" marker-end="url(#ah0)"/>
+        <text x="473" y="202" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--accent)">저장</text>
+
+        <!-- SAVE panel -->
+        <rect x="500" y="16" width="446" height="388" rx="11" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="518" y="42" font-family="var(--sans)" font-weight="700" font-size="14" fill="var(--ink)">저장 (SAVE) — Save Result 번들</text>
+        <text x="518" y="60" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">File ▸ Save Result… → 폴더 선택 → _result.raw(+.json) 우선 + 선택 산출물</text>
+        <g font-family="var(--mono)" font-size="11">
+          <rect x="518" y="72" width="410" height="30" rx="6" class="appbox"/><text x="530" y="91" fill="var(--app)" font-weight="600">&lt;name&gt;_result.raw</text><text x="690" y="91" fill="var(--muted)">16-bit 헤더리스 · 입력과 동일 (1차)</text>
+          <rect x="518" y="106" width="410" height="30" rx="6" class="appbox"/><text x="530" y="125" fill="var(--app)" font-weight="600">&lt;name&gt;_result.json</text><text x="690" y="125" fill="var(--muted)">resolution·dtype + provenance</text>
+          <rect x="518" y="140" width="410" height="30" rx="6" class="box"/><text x="530" y="159" fill="var(--ink)">_result.npz (선택)</text><text x="690" y="159" fill="var(--muted)">정확 float(양자화 전) + 마스크</text>
+          <rect x="518" y="174" width="410" height="30" rx="6" class="box"/><text x="530" y="193" fill="var(--ink)">_result_preview.png (선택)</text><text x="690" y="193" fill="var(--muted)">W/L 구운 "본 것" 8-bit</text>
+          <rect x="518" y="208" width="410" height="30" rx="6" class="box"/><text x="530" y="227" fill="var(--ink)">_result.tif (선택)</text><text x="690" y="227" fill="var(--muted)">16-bit TIFF · 외부 뷰어용</text>
+          <rect x="518" y="242" width="410" height="30" rx="6" class="box"/><text x="530" y="261" fill="var(--ink)">measurements.csv (선택)</text><text x="690" y="261" fill="var(--muted)">통계·QA 리포트</text>
+        </g>
+        <text x="518" y="296" font-family="var(--mono)" font-size="10" fill="var(--muted)">칼리브(offset→gain→defect) 출력 = 16-bit 카운트 → uint16 raw 그대로</text>
+        <g font-family="var(--mono)" font-size="9.5" fill="var(--crit)">
+          <text x="518" y="324">· 정밀본 16-bit — 8-bit 무단 클리핑 금지</text>
+          <text x="518" y="340">· 원본 덮어쓰기 금지 · C-20 사용자 폴더만 (data/ 차단)</text>
+          <text x="518" y="356">· provenance 없는 저장 = 재현 불가 → 항상 동봉</text>
+          <text x="518" y="372" fill="var(--warn)">· 버그 수정: RegisteredPipeline·RealImageSanity 결과 저장 가능하게</text>
+        </g>
+      </svg>
+    </div>
+  </figure>
+
+  <!-- ===================== DIAGRAM 1 : purpose-grouped tabs + Calibration tab ===================== -->
+  <h2><span class="n">1</span>구조 — 알고리즘 그룹별 탭 + Calibration 탭</h2>
+  <p class="sub">탭 = 목적(WP 그룹). 각 탭은 자기 입력세트·파라미터·뷰어를 가진다. Calibration 탭은 <b>OC·GC·BPM 생성(Build) → 촬영영상 적용(Apply)</b> 워크플로.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:22%">탭 (그룹)</th><th style="width:30%">골든 모듈</th><th>입력세트 / 특성</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Calibration (OC·GC·BPM)</td><td class="k">offset·gain·defect + defect_map</td><td>dark/flat 세트 → 생성 → 촬영영상 적용</td></tr>
+      <tr><td class="k">Lag</td><td class="k">lag · run_sequence</td><td>GHOST 시퀀스 · IRF ([placeholder])</td></tr>
+      <tr><td class="k">Line / Sat / Geo</td><td class="k">line_noise·saturation·geometry</td><td>reference·마스크 (#33/합성)</td></tr>
+      <tr><td class="k">Denoise</td><td class="k">denoise (VST+BM3D)</td><td>NoiseModel(α,σ)</td></tr>
+      <tr><td class="k">Enhancement</td><td class="k">mse·window</td><td>DRC · GSDF LUT</td></tr>
+      <tr><td class="k">Grid / VGrid</td><td class="k">grid·virtual_grid</td><td>관측 피크 · 산란 커널</td></tr>
+      <tr><td class="k">NDT</td><td class="k">ndt</td><td>Welford 적산 · IQI</td></tr>
+      <tr><td class="k">Metrics</td><td class="k">mtf·nps·dqe</td><td>팬텀/ROI · 라인차트(분석)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figure class="frame">
+    <figcaption>Fig.1 — Calibration 탭: Build(OC·GC·BPM 생성) → Apply(촬영영상 체크박스)</figcaption>
+    <div class="scroll">
+      <svg viewBox="0 0 960 600" role="img" aria-label="Calibration 탭 구조">
+        <defs><marker id="ahc" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/></marker></defs>
+        <!-- tab bar -->
+        <rect x="14" y="8" width="112" height="28" rx="6" class="appbox"/><text x="70" y="26" text-anchor="middle" font-family="var(--mono)" font-size="10.5" font-weight="600" fill="var(--app)">Calibration</text>
+        <g font-family="var(--mono)" font-size="10" fill="var(--muted)">
+          <rect x="130" y="8" width="58" height="28" rx="6" class="box"/><text x="159" y="26" text-anchor="middle">Lag</text>
+          <rect x="192" y="8" width="112" height="28" rx="6" class="box"/><text x="248" y="26" text-anchor="middle">Line/Sat/Geo</text>
+          <rect x="308" y="8" width="78" height="28" rx="6" class="box"/><text x="347" y="26" text-anchor="middle">Denoise</text>
+          <rect x="390" y="8" width="92" height="28" rx="6" class="box"/><text x="436" y="26" text-anchor="middle">Enhancement</text>
+          <rect x="486" y="8" width="54" height="28" rx="6" class="box"/><text x="513" y="26" text-anchor="middle">Grid</text>
+          <rect x="544" y="8" width="52" height="28" rx="6" class="box"/><text x="570" y="26" text-anchor="middle">NDT</text>
+          <rect x="600" y="8" width="74" height="28" rx="6" class="box"/><text x="637" y="26" text-anchor="middle">Metrics</text>
+        </g>
+
+        <!-- LEFT: Build -->
+        <rect x="14" y="48" width="292" height="540" rx="10" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="28" y="70" font-family="var(--sans)" font-weight="700" font-size="13" fill="var(--ink)">① Build — 캘리브 생성</text>
+        <!-- OC -->
+        <rect x="26" y="82" width="268" height="118" rx="8" class="box"/>
+        <text x="38" y="102" font-family="var(--sans)" font-size="12" font-weight="600" fill="var(--ink)">OC · Offset correction</text>
+        <text x="38" y="120" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">입력: dark 세트 (16bit cal / MasterDark)</text>
+        <rect x="38" y="128" width="244" height="24" rx="5" class="rowon"/><text x="48" y="144" font-family="var(--mono)" font-size="10" fill="var(--good)">build_offset_calibset → Offset map O</text>
+        <text x="38" y="170" font-family="var(--mono)" font-size="9.5" fill="var(--ink)">적용: I₁ = clamp(I_raw − O, 0)</text>
+        <text x="38" y="188" font-family="var(--mono)" font-size="9" fill="var(--faint)">param: raw_saturation_threshold</text>
+        <!-- GC -->
+        <rect x="26" y="208" width="268" height="130" rx="8" class="box"/>
+        <text x="38" y="228" font-family="var(--sans)" font-size="12" font-weight="600" fill="var(--ink)">GC · Gain correction</text>
+        <text x="38" y="246" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">입력: bright/flat 세트 — 조사조건별</text>
+        <text x="38" y="260" font-family="var(--mono)" font-size="9" fill="var(--faint)">(CalSet_19008 · 최소선량선형)</text>
+        <rect x="38" y="266" width="244" height="24" rx="5" class="rowon"/><text x="48" y="282" font-family="var(--mono)" font-size="10" fill="var(--good)">build_gain_calibset → G = mean/flat</text>
+        <text x="38" y="308" font-family="var(--mono)" font-size="9.5" fill="var(--ink)">적용: I₂ = clamp(I₁ × G, 65535)</text>
+        <text x="38" y="326" font-family="var(--mono)" font-size="9" fill="var(--warn)">multi-노출(anchor) 게인 [B] 대기</text>
+        <!-- BPM -->
+        <rect x="26" y="346" width="268" height="176" rx="8" class="box"/>
+        <text x="38" y="366" font-family="var(--sans)" font-size="12" font-weight="600" fill="var(--ink)">BPM · 생성 (E2597)</text>
+        <text x="38" y="384" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">입력: dark 스택 + flat 스택</text>
+        <rect x="38" y="392" width="244" height="22" rx="5" class="rowon"/><text x="48" y="407" font-family="var(--mono)" font-size="9.5" fill="var(--good)">classify_defects → 7분류</text>
+        <text x="42" y="428" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">over·under·noisy(6×[S])·unstable</text>
+        <text x="42" y="440" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">lag·dead·nonuniform (임계 [P])</text>
+        <rect x="38" y="448" width="244" height="22" rx="5" class="rowon"/><text x="48" y="463" font-family="var(--mono)" font-size="9.5" fill="var(--good)">classify_morphology → class_map</text>
+        <text x="42" y="484" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">single / line / cluster (C_max 게이트)</text>
+        <text x="38" y="504" font-family="var(--mono)" font-size="9" fill="var(--warn)">스택 미비 시 BPM.raw 사용 · 정본 #33 대기</text>
+        <text x="28" y="548" font-family="var(--mono)" font-size="9" fill="var(--faint)">build_defect_map (metrics → common)</text>
+        <text x="28" y="566" font-family="var(--mono)" font-size="9" fill="var(--faint)">생성물 = CalibSet(OFFSET/GAIN/DEFECT)</text>
+
+        <!-- middle arrow -->
+        <path d="M306,300 L332,300" stroke="var(--accent)" stroke-width="2" fill="none" marker-end="url(#ahc)"/>
+
+        <!-- CENTER: Apply -->
+        <rect x="338" y="48" width="320" height="540" rx="10" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="352" y="70" font-family="var(--sans)" font-weight="700" font-size="13" fill="var(--ink)">② Apply — 촬영영상</text>
+        <text x="352" y="90" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">폴더/파일 리스트 (아크릴 · 최소선량선형)</text>
+        <rect x="352" y="98" width="292" height="60" rx="7" class="box"/>
+        <g font-family="var(--mono)" font-size="9.5" fill="var(--ink)">
+          <text x="362" y="116">아크릴5장.raw · 아크릴10장.raw …</text>
+          <text x="362" y="132" fill="var(--muted)">최소선량선형/*.raw</text>
+          <text x="362" y="148" fill="var(--faint)">(_result.raw 제외)</text>
+        </g>
+        <!-- checkboxes -->
+        <text x="352" y="182" font-family="var(--mono)" font-size="10" fill="var(--faint)">적용 (고정순서, 미체크 스킵):</text>
+        <g font-family="var(--mono)" font-size="11" fill="var(--ink)">
+          <rect x="360" y="190" width="14" height="14" rx="3" fill="var(--good)"/><path d="M363,197 l3,3 l5,-6" stroke="#fff" stroke-width="1.6" fill="none"/><text x="382" y="201">OC (offset)</text>
+          <rect x="470" y="190" width="14" height="14" rx="3" fill="var(--good)"/><path d="M473,197 l3,3 l5,-6" stroke="#fff" stroke-width="1.6" fill="none"/><text x="492" y="201">GC (gain)</text>
+          <rect x="570" y="190" width="14" height="14" rx="3" fill="var(--good)"/><path d="M573,197 l3,3 l5,-6" stroke="#fff" stroke-width="1.6" fill="none"/><text x="592" y="201">BPM</text>
+        </g>
+        <!-- viewer -->
+        <rect x="352" y="216" width="292" height="286" rx="8" fill="url(#film)" stroke="var(--border)"/>
+        <text x="498" y="240" text-anchor="middle" fill="#e9eef3" font-family="var(--mono)" font-size="10">처리된 영상 (풀해상도 회색조)</text>
+        <ellipse cx="498" cy="360" rx="95" ry="110" fill="#dfe7ee" opacity=".12"/>
+        <rect x="466" y="280" width="64" height="160" rx="22" fill="#eef3f7" opacity=".10"/>
+        <rect x="360" y="470" width="276" height="24" rx="6" fill="color-mix(in srgb,#05090d 40%,transparent)" stroke="#3a4652"/>
+        <g font-family="var(--mono)" font-size="9.5" fill="#dfe7ee">
+          <text x="404" y="486" text-anchor="middle">Before</text><text x="470" y="486" text-anchor="middle">After</text><text x="536" y="486" text-anchor="middle">Diff</text><text x="600" y="486" text-anchor="middle">Blink</text>
+        </g>
+        <text x="352" y="524" font-family="var(--mono)" font-size="9.5" fill="var(--ink)">W/L · zoom/pan · probe(원본값)</text>
+        <text x="352" y="546" font-family="var(--mono)" font-size="9.5" fill="var(--app)">저장 → &lt;name&gt;_result.raw (+.json)</text>
+        <text x="352" y="566" font-family="var(--mono)" font-size="9" fill="var(--faint)">고정순서 offset→gain→defect (SWR-000-2) · UI DSP 0</text>
+
+        <!-- RIGHT: inspector -->
+        <rect x="672" y="48" width="274" height="540" rx="10" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="686" y="70" font-family="var(--mono)" font-size="11" letter-spacing=".06em" fill="var(--faint)">INSPECTOR</text>
+        <text x="686" y="94" font-family="var(--sans)" font-size="12" fill="var(--ink)">▸ 히스토그램 · W/L</text>
+        <rect x="686" y="102" width="246" height="44" rx="6" fill="var(--panel)" stroke="var(--border)"/>
+        <polyline points="690,142 708,136 722,116 738,104 756,116 776,132 806,142 860,144 928,144" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="686" y="172" font-family="var(--sans)" font-size="12" fill="var(--ink)">▸ E2597 class counts</text>
+        <text x="686" y="189" font-family="var(--mono)" font-size="9" fill="var(--faint)">over·under·noisy·dead·nonuniform…</text>
+        <text x="686" y="214" font-family="var(--sans)" font-size="12" fill="var(--ink)">▸ Mask overlays</text>
+        <g font-family="var(--mono)" font-size="9">
+          <rect x="686" y="222" width="13" height="9" fill="#dc1414"/><text x="704" y="230" fill="var(--muted)">defect</text>
+          <rect x="756" y="222" width="13" height="9" fill="#00aaff"/><text x="774" y="230" fill="var(--muted)">interp</text>
+          <rect x="826" y="222" width="13" height="9" fill="#ffa500"/><text x="844" y="230" fill="var(--muted)">sat</text>
+        </g>
+        <text x="686" y="256" font-family="var(--sans)" font-size="12" fill="var(--ink)">▸ Calib 요약</text>
+        <text x="686" y="273" font-family="var(--mono)" font-size="9" fill="var(--faint)">OC/GC/BPM CalibSet id·ver·panel</text>
+        <text x="686" y="298" font-family="var(--sans)" font-size="12" fill="var(--ink)">▸ Params</text>
+        <text x="686" y="315" font-family="var(--mono)" font-size="9" fill="var(--faint)">gain_min/max · C_max · E2597 임계[P]</text>
+        <text x="686" y="340" font-family="var(--sans)" font-size="12" fill="var(--ink)">▸ Stage history</text>
+        <text x="686" y="357" font-family="var(--mono)" font-size="9" fill="var(--faint)">offset→gain→defect · params_hash</text>
+      </svg>
+    </div>
+  </figure>
+
+  <!-- ===================== DIAGRAM 1b : CORRECTION STACK (per-tab apply mechanism) ===================== -->
+  <h2><span class="n">1b</span>탭 내부 적용 메커니즘 (Correction Stack)</h2>
+  <p class="sub">중심 컨트롤. 스테이지는 <b>엔진 고정순서</b>로 잠기고(재정렬 불가, SWR-000-2), 사용자는 <b>멤버십만 복수 선택</b>.
+  각 행은 <b>자기 calib 입력</b>에 바인딩되며 등록 부재 시 비활성. Solo=개별 검증, 부분/전체 실행=조합, <code>validation_mode</code> 1회 실행으로 모든 전/후 스크럽.</p>
+  <figure class="frame">
+    <figcaption>Fig.1 — Correction Stack 체크리스트 + 개별↔조합 비교 (P1·P4·P3·P2·P5 종합)</figcaption>
+    <div class="scroll">
+      <svg viewBox="0 0 960 560" role="img" aria-label="Correction Stack 조합 검증 모델">
+        <!-- LEFT: stack panel -->
+        <rect x="14" y="46" width="454" height="502" rx="12" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="34" y="72" class="lbl" fill="var(--ink)" font-family="var(--sans)" font-weight="700" font-size="14">Correction Stack</text>
+        <text x="180" y="72" font-family="var(--mono)" font-size="10.5" fill="var(--faint)">고정순서 · 멤버십 복수선택</text>
+        <!-- column headers -->
+        <g font-family="var(--mono)" font-size="9.5" fill="var(--faint)">
+          <text x="34" y="94">✓</text><text x="58" y="94">Solo</text><text x="92" y="94">Stage · SWR</text>
+          <text x="256" y="94">Calib 입력</text><text x="404" y="94">상태</text>
+        </g>
+        <line x1="26" y1="100" x2="456" y2="100" stroke="var(--grid)"/>
+
+        <!-- row offset -->
+        <rect x="26" y="106" width="430" height="32" rx="7" class="rowon"/>
+        <rect x="34" y="115" width="14" height="14" rx="3" fill="var(--good)"/><path d="M37,122 l3,3 l5,-6" stroke="#fff" stroke-width="1.6" fill="none"/>
+        <circle cx="65" cy="122" r="6" fill="none" stroke="var(--muted)"/>
+        <text x="88" y="120" font-family="var(--sans)" font-size="12" fill="var(--ink)" font-weight="600">Offset</text>
+        <text x="88" y="132" font-family="var(--mono)" font-size="9" fill="var(--muted)">SWR-101 · CalibKind.OFFSET</text>
+        <text x="256" y="126" font-family="var(--mono)" font-size="10.5" fill="var(--ink)">MasterDark</text>
+        <circle cx="410" cy="122" r="5" fill="var(--good)"/><text x="422" y="126" font-family="var(--mono)" font-size="10" fill="var(--good)">valid</text>
+
+        <!-- row gain -->
+        <rect x="26" y="142" width="430" height="32" rx="7" class="rowon"/>
+        <rect x="34" y="151" width="14" height="14" rx="3" fill="var(--good)"/><path d="M37,158 l3,3 l5,-6" stroke="#fff" stroke-width="1.6" fill="none"/>
+        <circle cx="65" cy="158" r="6" fill="none" stroke="var(--muted)"/>
+        <text x="88" y="156" font-family="var(--sans)" font-size="12" fill="var(--ink)" font-weight="600">Gain</text>
+        <text x="88" y="168" font-family="var(--mono)" font-size="9" fill="var(--muted)">SWR-201 · CalibKind.GAIN</text>
+        <text x="256" y="162" font-family="var(--mono)" font-size="10.5" fill="var(--ink)">CalSet_19008</text>
+        <circle cx="410" cy="158" r="5" fill="var(--good)"/><text x="422" y="162" font-family="var(--mono)" font-size="10" fill="var(--good)">valid</text>
+
+        <!-- row defect (solo active) -->
+        <rect x="26" y="178" width="430" height="32" rx="7" class="rowon"/>
+        <rect x="34" y="187" width="14" height="14" rx="3" fill="var(--good)"/><path d="M37,194 l3,3 l5,-6" stroke="#fff" stroke-width="1.6" fill="none"/>
+        <circle cx="65" cy="194" r="6" fill="var(--accent)" stroke="var(--accent)"/><circle cx="65" cy="194" r="2.4" fill="#fff"/>
+        <text x="88" y="192" font-family="var(--sans)" font-size="12" fill="var(--ink)" font-weight="600">Defect</text>
+        <text x="88" y="204" font-family="var(--mono)" font-size="9" fill="var(--muted)">SWR-301 · CalibKind.DEFECT</text>
+        <text x="256" y="198" font-family="var(--mono)" font-size="10.5" fill="var(--ink)">BPM</text>
+        <circle cx="410" cy="194" r="5" fill="var(--good)"/><text x="422" y="198" font-family="var(--mono)" font-size="10" fill="var(--good)">valid</text>
+
+        <!-- row lag placeholder -->
+        <rect x="26" y="214" width="430" height="32" rx="7" class="rowmid"/>
+        <rect x="34" y="223" width="14" height="14" rx="3" fill="none" stroke="var(--warn)"/>
+        <circle cx="65" cy="230" r="6" fill="none" stroke="var(--muted)"/>
+        <text x="88" y="228" font-family="var(--sans)" font-size="12" fill="var(--ink)" font-weight="600">Lag</text>
+        <text x="88" y="240" font-family="var(--mono)" font-size="9" fill="var(--muted)">SWR-401 · 시퀀스 상태 (run_sequence)</text>
+        <text x="256" y="234" font-family="var(--mono)" font-size="10.5" fill="var(--warn)">GHOST · IRF placeholder</text>
+        <circle cx="410" cy="230" r="5" fill="var(--warn)"/><text x="422" y="234" font-family="var(--mono)" font-size="10" fill="var(--warn)">임시</text>
+
+        <!-- grouped tail (disabled) -->
+        <rect x="26" y="250" width="430" height="86" rx="7" class="rowoff"/>
+        <text x="40" y="270" font-family="var(--sans)" font-size="11.5" fill="var(--muted)" font-weight="600">line_noise · saturation · geometry · grid</text>
+        <text x="40" y="286" font-family="var(--sans)" font-size="11.5" fill="var(--muted)" font-weight="600">virtual_grid · denoise · mse · window</text>
+        <text x="40" y="306" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">등록 calib 부재 → 비활성 (지침세트 #33 / 합성 대기)</text>
+        <text x="40" y="322" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">mse: denoise 선행 없으면 엔진 자체 오류 (상류 noise 필수)</text>
+        <rect x="386" y="258" width="58" height="17" rx="5" fill="color-mix(in srgb,var(--faint) 20%,transparent)"/>
+        <text x="415" y="270" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--muted)">locked</text>
+
+        <!-- action bar -->
+        <rect x="26" y="346" width="210" height="30" rx="7" class="appbox"/>
+        <text x="131" y="365" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--app)" font-weight="600">▶ Run selected subset</text>
+        <rect x="246" y="346" width="120" height="30" rx="7" fill="var(--panel)" stroke="var(--app)"/>
+        <text x="306" y="365" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--app)" font-weight="600">▶ Run full</text>
+
+        <g font-family="var(--mono)" font-size="9.5">
+          <text x="30" y="398" fill="var(--muted)">· order = 엔진 고정, 재정렬 불가 (SWR-000-2)</text>
+          <text x="30" y="414" fill="var(--muted)">· calib 부재 → 거부, 무단 기본값 금지 (SWR-000-5)</text>
+          <text x="30" y="430" fill="var(--muted)">· subset = 부분수열 선택 (재정렬 아님)</text>
+          <text x="30" y="446" fill="var(--accent)">· UI = 요청 빌더 · DSP 0 (C-09)</text>
+        </g>
+
+        <!-- RIGHT: individual vs combined + intermediates -->
+        <rect x="484" y="46" width="462" height="502" rx="12" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="504" y="72" font-family="var(--sans)" font-weight="700" font-size="14" fill="var(--ink)">개별 → 조합 검증 (1-pass)</text>
+
+        <defs>
+          <linearGradient id="film" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="var(--canvas-a)"/><stop offset="1" stop-color="var(--canvas-b)"/>
+          </linearGradient>
+        </defs>
+        <!-- pane A -->
+        <rect x="500" y="88" width="208" height="132" rx="9" fill="url(#film)" stroke="var(--border)"/>
+        <ellipse cx="604" cy="150" rx="55" ry="44" fill="#dfe7ee" opacity=".12"/>
+        <text x="604" y="110" text-anchor="middle" fill="#e9eef3" font-family="var(--mono)" font-size="10">개별 (Solo)</text>
+        <text x="604" y="210" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="9.5">Defect only · raw 기준</text>
+        <!-- pane B -->
+        <rect x="722" y="88" width="208" height="132" rx="9" fill="url(#film)" stroke="var(--border)"/>
+        <ellipse cx="826" cy="150" rx="55" ry="44" fill="#dfe7ee" opacity=".16"/>
+        <rect x="800" y="120" width="52" height="60" rx="16" fill="#eef3f7" opacity=".10"/>
+        <text x="826" y="110" text-anchor="middle" fill="#e9eef3" font-family="var(--mono)" font-size="10">조합 (Combined)</text>
+        <text x="826" y="210" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="9.5">Offset→Gain→Defect</text>
+
+        <!-- intermediates scrubber -->
+        <text x="500" y="248" font-family="var(--mono)" font-size="10" fill="var(--muted)">validation_mode 단일 실행 → intermediates[] : 모든 스테이지 전/후 스크럽</text>
+        <line x1="516" y1="278" x2="914" y2="278" stroke="var(--grid)" stroke-width="2"/>
+        <g font-family="var(--mono)" font-size="10">
+          <circle cx="524" cy="278" r="6" fill="var(--panel)" stroke="var(--muted)"/><text x="524" y="298" text-anchor="middle" fill="var(--muted)">raw</text>
+          <circle cx="654" cy="278" r="6" fill="var(--panel)" stroke="var(--good)"/><text x="654" y="298" text-anchor="middle" fill="var(--muted)">offset</text>
+          <circle cx="784" cy="278" r="6" fill="var(--panel)" stroke="var(--good)"/><text x="784" y="298" text-anchor="middle" fill="var(--muted)">gain</text>
+          <circle cx="906" cy="278" r="8" fill="var(--accent)" stroke="var(--accent)"/><text x="906" y="298" text-anchor="middle" fill="var(--accent)" font-weight="600">defect</text>
+        </g>
+
+        <!-- diff strip -->
+        <rect x="500" y="316" width="430" height="70" rx="9" fill="color-mix(in srgb,var(--accent) 8%,var(--panel))" stroke="var(--border)"/>
+        <text x="516" y="340" font-family="var(--sans)" font-size="12" fill="var(--ink)" font-weight="600">Diff · 개별 vs 조합</text>
+        <text x="516" y="358" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">엔진 계산 diff — defect 보간처럼 미세한 변화도 강조·확대</text>
+        <text x="516" y="374" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">linked zoom/pan으로 픽셀 정합 유지</text>
+        <rect x="820" y="328" width="96" height="46" rx="6" fill="url(#film)" opacity=".8"/>
+        <circle cx="852" cy="351" r="3" fill="#ff5a5a"/><circle cx="868" cy="345" r="2.4" fill="#ff5a5a"/><circle cx="878" cy="356" r="3" fill="#ff5a5a"/>
+
+        <!-- annotations -->
+        <g font-family="var(--mono)" font-size="9.5">
+          <text x="500" y="412" fill="var(--muted)">· membership = 사용자 복수선택 (Axis A)</text>
+          <text x="500" y="428" fill="var(--muted)">· 개별 = Solo(raw 기준) · 누적 = through-stage — 구분 표기</text>
+          <text x="500" y="444" fill="var(--muted)">· 결과 캐시 키 = (정렬 스테이지셋 + calib 버전 + frame)</text>
+          <text x="500" y="460" fill="var(--seam)">· 조합·순서 권위 = Python orchestrator (C# 아님)</text>
+        </g>
+      </svg>
+    </div>
+  </figure>
+
+  <!-- golden contract facts -->
+  <div class="callout seam">
+    <b>골든 조합 계약 (딥싱크).</b> 어댑터가 시임 뒤에서 호출할 실제 형상 — 조합 로직 재구현 없이 위임.
+  </div>
+  <pre><span class="c"># (a) 개별 스테이지</span>
+<span class="fn">run_pipeline</span>(frame, <span class="kw">PipelineDefinition</span>(stages=(<span class="kw">"offset"</span>,)), {<span class="kw">"offset"</span>: offset.process},
+             calib_map={<span class="kw">"offset"</span>: off_cal}, params_map={...}, validation_mode=<span class="kw">True</span>)
+<span class="c"># (b) 부분 조합 — 반드시 CANONICAL_ORDER의 부분수열 (재정렬 시 PipelineOrderError)</span>
+<span class="kw">PipelineDefinition</span>(stages=(<span class="kw">"offset"</span>,<span class="kw">"gain"</span>,<span class="kw">"defect"</span>))
+<span class="c"># (c) 전체 — post(미등록 tail) 제외한 구현 12 스테이지</span>
+stages = <span class="fn">tuple</span>(s <span class="kw">for</span> s <span class="kw">in</span> CANONICAL_ORDER <span class="kw">if</span> s != <span class="kw">"post"</span>)
+<span class="c"># 1-pass 전/후:  result.intermediates[i] = i번째 실행 스테이지 출력  → UI 스크럽</span>
+<span class="c"># 주의: registry는 stage→module.process (default_registry()의 ProcessModule 아님)</span></pre>
+
+  <!-- ===================== DIAGRAM 2 : UI WORKSPACE ===================== -->
+  <h2><span class="n">2</span>UI 워크스페이스 — 좌측이 Correction Stack</h2>
+  <p class="sub">탭 더미 제거. 좌=Correction Stack(조합 컨트롤), 중앙=단일 풀해상도 회색조 캔버스, 우=인스펙터, 하단=probe. 비교는 창이 아니라 모드.</p>
+  <figure class="frame">
+    <figcaption>Fig.2 — 탭 내부 뷰어 레이아웃 (좌 입력 · 중앙 캔버스 · 우 인스펙터)</figcaption>
+    <div class="scroll">
+      <svg viewBox="0 0 960 540" role="img" aria-label="재설계 UI 워크스페이스">
+        <rect x="10" y="10" width="940" height="520" rx="12" class="box"/>
+        <rect x="10" y="10" width="940" height="32" rx="12" fill="color-mix(in srgb,var(--ink) 6%,var(--panel))" stroke="var(--border)"/>
+        <text x="28" y="31" fill="var(--ink)" font-family="var(--sans)" font-size="13" font-weight="600">XDET 검증 뷰어 — 단일 워크스페이스</text>
+
+        <!-- toolbar -->
+        <rect x="24" y="52" width="912" height="34" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <g font-family="var(--mono)" font-size="11" fill="var(--ink)">
+          <rect x="34" y="60" width="50" height="18" rx="5" class="appbox"/><text x="59" y="73" text-anchor="middle">W/L</text>
+          <rect x="90" y="60" width="44" height="18" rx="5" fill="var(--panel)" stroke="var(--border)"/><text x="112" y="73" text-anchor="middle">Pan</text>
+          <rect x="140" y="60" width="50" height="18" rx="5" fill="var(--panel)" stroke="var(--border)"/><text x="165" y="73" text-anchor="middle">Zoom</text>
+          <rect x="196" y="60" width="44" height="18" rx="5" fill="var(--panel)" stroke="var(--border)"/><text x="218" y="73" text-anchor="middle">ROI</text>
+          <rect x="246" y="60" width="118" height="18" rx="5" fill="var(--panel)" stroke="var(--border)"/><text x="305" y="73" text-anchor="middle">Compare ▾</text>
+          <rect x="370" y="60" width="48" height="18" rx="5" fill="var(--panel)" stroke="var(--border)"/><text x="394" y="73" text-anchor="middle">Auto</text>
+          <rect x="866" y="60" width="60" height="18" rx="5" class="appbox"/><text x="896" y="73" text-anchor="middle">Save</text>
+        </g>
+
+        <!-- left: correction stack -->
+        <rect x="24" y="96" width="210" height="392" rx="10" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="38" y="118" font-family="var(--mono)" font-size="11" letter-spacing=".06em" fill="var(--faint)">CORRECTION STACK</text>
+        <g font-family="var(--sans)" font-size="12" fill="var(--ink)">
+          <rect x="38" y="128" width="182" height="26" rx="6" class="rowon"/><rect x="44" y="136" width="11" height="11" rx="2" fill="var(--good)"/><text x="64" y="145">Offset · MasterDark</text>
+          <rect x="38" y="158" width="182" height="26" rx="6" class="rowon"/><rect x="44" y="166" width="11" height="11" rx="2" fill="var(--good)"/><text x="64" y="175">Gain · CalSet_19008</text>
+          <rect x="38" y="188" width="182" height="26" rx="6" class="rowon"/><rect x="44" y="196" width="11" height="11" rx="2" fill="var(--good)"/><text x="64" y="205">Defect · BPM</text>
+          <rect x="38" y="218" width="182" height="26" rx="6" class="rowmid"/><rect x="44" y="226" width="11" height="11" rx="2" fill="none" stroke="var(--warn)"/><text x="64" y="235" fill="var(--muted)">Lag · GHOST(임시)</text>
+          <rect x="38" y="248" width="182" height="40" rx="6" class="rowoff"/><text x="48" y="264" font-size="10.5" fill="var(--muted)">line_noise…window</text><text x="48" y="279" font-family="var(--mono)" font-size="9" fill="var(--faint)">locked · #33 대기</text>
+        </g>
+        <rect x="38" y="298" width="182" height="26" rx="6" class="appbox"/><text x="129" y="315" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--app)" font-weight="600">▶ Subset / Full</text>
+        <line x1="38" y1="338" x2="220" y2="338" stroke="var(--grid)"/>
+        <text x="38" y="358" font-family="var(--sans)" font-size="11.5" fill="var(--muted)">▸ Open image… (보조)</text>
+        <text x="38" y="470" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">QUARANTINE: 실측=sanity</text>
+
+        <!-- center canvas -->
+        <rect x="246" y="96" width="470" height="392" rx="10" fill="url(#film)" stroke="var(--border)"/>
+        <text x="481" y="124" text-anchor="middle" fill="#e9eef3" font-family="var(--mono)" font-size="12">MAIN IMAGE CANVAS · 3072² 회색조 1:1</text>
+        <text x="481" y="142" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="10">WriteableBitmap(Bgra32) + W/L LUT + pan/zoom + probe</text>
+        <ellipse cx="481" cy="298" rx="120" ry="150" fill="#c9d3dc" opacity=".13"/>
+        <rect x="444" y="208" width="74" height="200" rx="30" fill="#dfe7ee" opacity=".10"/>
+        <rect x="262" y="452" width="438" height="28" rx="8" fill="color-mix(in srgb,#05090d 40%,transparent)" stroke="#3a4652"/>
+        <g font-family="var(--mono)" font-size="10.5" fill="#dfe7ee">
+          <text x="312" y="470" text-anchor="middle">Before</text><text x="372" y="470" text-anchor="middle">After</text>
+          <text x="425" y="470" text-anchor="middle">Diff</text><text x="480" y="470" text-anchor="middle">Blink</text>
+          <text x="543" y="470" text-anchor="middle">Checker</text><text x="612" y="470" text-anchor="middle">Split</text>
+        </g>
+
+        <!-- right inspector -->
+        <rect x="728" y="96" width="208" height="392" rx="10" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="742" y="118" font-family="var(--mono)" font-size="11" letter-spacing=".06em" fill="var(--faint)">INSPECTOR</text>
+        <text x="742" y="140" font-size="12" font-family="var(--sans)" fill="var(--ink)">▸ W/L · 히스토그램</text>
+        <rect x="742" y="148" width="180" height="44" rx="6" fill="var(--panel)" stroke="var(--border)"/>
+        <polyline points="746,188 762,184 774,168 786,156 800,166 816,180 840,188 880,190 918,190" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+        <g font-size="12" font-family="var(--sans)" fill="var(--ink)">
+          <text x="742" y="214">▸ Stats / Metrics</text><text x="742" y="248">▸ Stage history chain</text>
+          <text x="742" y="282">▸ Mask overlays</text><text x="742" y="330">▸ Metadata</text>
+        </g>
+        <g font-family="var(--mono)" font-size="9.5" fill="var(--faint)">
+          <text x="742" y="230">min·max · max|Δ| · MTF</text><text x="742" y="264">module·calib·ver·order</text>
+        </g>
+        <g font-family="var(--mono)" font-size="9">
+          <rect x="742" y="290" width="13" height="9" fill="#dc1414"/><text x="760" y="298" fill="var(--muted)">defect</text>
+          <rect x="806" y="290" width="13" height="9" fill="#ffa500"/><text x="824" y="298" fill="var(--muted)">sat</text>
+          <rect x="862" y="290" width="13" height="9" fill="#00aaff"/><text x="880" y="298" fill="var(--muted)">interp</text>
+        </g>
+
+        <!-- status bar -->
+        <rect x="24" y="496" width="912" height="26" rx="7" fill="color-mix(in srgb,var(--ink) 6%,var(--panel))" stroke="var(--border)"/>
+        <text x="38" y="513" font-family="var(--mono)" font-size="10.5" fill="var(--muted)">probe(r,c): before=13120  after=8461  diff=−4659    ·    engine: ready    ·    W/L 0 / 20539</text>
+      </svg>
+    </div>
+  </figure>
+
+  <!-- ===================== DIAGRAM 3 : DATA FLOW ===================== -->
+  <h2><span class="n">3</span>데이터 플로우 — run_pipeline · intermediates · W/L LUT</h2>
+  <p class="sub">등록 영상은 <b>풀해상도 1회 마샬</b>. 조합 요청은 정렬 스테이지셋+calib_map을 골든에 위임, <code>intermediates[]</code>로 전/후 회수. W/L은 표시 전용 LUT.</p>
+  <figure class="frame">
+    <figcaption>Fig.3 — 조합 요청 → 골든 → 풀해상도(+intermediates+masks) → LUT → 캔버스</figcaption>
+    <div class="scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-label="데이터 플로우">
+        <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker></defs>
+        <g font-family="var(--sans)">
+          <rect x="14" y="58" width="120" height="60" rx="9" class="box"/>
+          <text x="74" y="82" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">등록 edrogi</text>
+          <text x="74" y="100" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--muted)">아크릴 + calib</text>
+
+          <rect x="172" y="50" width="150" height="76" rx="9" class="seambox"/>
+          <text x="247" y="72" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">시임 조합 요청</text>
+          <text x="247" y="89" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--seam)">run_pipeline 미러</text>
+          <text x="247" y="102" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">stages+calib_map</text>
+          <text x="247" y="115" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">validation_mode</text>
+
+          <rect x="360" y="50" width="152" height="76" rx="9" class="frozenbox"/>
+          <text x="436" y="72" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">골든 orchestrator</text>
+          <text x="436" y="89" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--frozen)">고정순서 + calib gate</text>
+          <text x="436" y="102" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">SWR-000-2/-5</text>
+          <text x="436" y="115" text-anchor="middle" font-family="var(--mono)" font-size="8" fill="var(--frozen)">FROZEN</text>
+
+          <rect x="550" y="42" width="164" height="92" rx="9" class="box"/>
+          <text x="632" y="64" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">풀해상도 결과</text>
+          <text x="632" y="81" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">intermediates[] (전/후)</text>
+          <text x="632" y="95" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">+ masks + history</text>
+          <text x="632" y="109" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">+ diff(엔진) + stats</text>
+
+          <rect x="752" y="50" width="120" height="58" rx="9" class="appbox"/>
+          <text x="812" y="72" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">W/L LUT</text>
+          <text x="812" y="89" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--app)">display-only 16→8b</text>
+          <text x="812" y="101" text-anchor="middle" font-family="var(--mono)" font-size="8" fill="var(--muted)">DSP 아님</text>
+
+          <rect x="752" y="152" width="120" height="52" rx="9" fill="url(#film)" stroke="var(--border)"/>
+          <text x="812" y="174" text-anchor="middle" fill="#e9eef3" font-size="12" font-weight="600">캔버스</text>
+          <text x="812" y="190" text-anchor="middle" fill="#aebdcb" font-family="var(--mono)" font-size="8.5">WriteableBitmap</text>
+        </g>
+        <g stroke="var(--accent)" stroke-width="1.8" fill="none" marker-end="url(#ah)">
+          <path d="M134,88 L168,88"/><path d="M322,88 L356,88"/><path d="M512,88 L546,88"/><path d="M714,84 L748,84"/><path d="M812,108 L812,148"/>
+        </g>
+        <path d="M632,134 L632,230 L876,230" stroke="var(--accent)" stroke-width="1.8" fill="none" marker-end="url(#ah)"/>
+        <rect x="548" y="218" width="80" height="24" rx="7" fill="var(--panel)" stroke="var(--border)"/>
+        <text x="588" y="234" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">probe →</text>
+        <text x="742" y="248" font-family="var(--mono)" font-size="9.5" fill="var(--muted)">저장: C-20 가드 → 사용자 지정 폴더 (data/ 금지)</text>
+        <text x="14" y="286" font-family="var(--mono)" font-size="10" fill="var(--faint)">UI = zero DSP · 조합/순서 권위 = orchestrator · diff·stats = 엔진 · 512² 블록평균 표시경로 폐기</text>
+      </svg>
+    </div>
+  </figure>
+
+  <!-- ===================== DIAGRAM 4 : COMPONENTS ===================== -->
+  <h2><span class="n">4</span>컴포넌트 아키텍처 — 시임에 run_pipeline 미러 신설</h2>
+  <p class="sub">시임 계약·fidelity 테스트·골든은 유지. MainWindow·렌더 재구축. 시임은 <b>run_pipeline 미러 + PipelineDefinition/calib_map DTO</b>로 확장.</p>
+  <figure class="frame">
+    <figcaption>Fig.4 — 프로젝트 의존 계층 + FROZEN 경계</figcaption>
+    <div class="scroll">
+      <svg viewBox="0 0 960 340" role="img" aria-label="컴포넌트 아키텍처">
+        <defs><marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--muted)"/></marker></defs>
+        <rect x="150" y="16" width="660" height="62" rx="10" class="appbox"/>
+        <text x="480" y="40" text-anchor="middle" fill="var(--ink)" font-family="var(--sans)" font-size="13" font-weight="600">Xdet.Console.App · WPF MVVM  <tspan fill="var(--crit)" font-family="var(--mono)" font-size="11">(재구축)</tspan></text>
+        <text x="480" y="60" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--muted)">CorrectionStack VM · ImageCanvas · WindowLevel · Compare · Inspector  |  DSP 0</text>
+
+        <rect x="150" y="114" width="660" height="62" rx="10" class="seambox"/>
+        <text x="480" y="138" text-anchor="middle" fill="var(--ink)" font-family="var(--sans)" font-size="13" font-weight="600">Xdet.Engine.Contract · IXdetEngine + DTOs · Python-free  <tspan fill="var(--warn)" font-family="var(--mono)" font-size="11">(확장)</tspan></text>
+        <text x="480" y="158" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--muted)">NEW: RunPipeline(stages, calib_map, params_map, validationMode) · FrameData(풀해상도)+masks+history+intermediates</text>
+
+        <rect x="150" y="212" width="660" height="58" rx="10" class="box"/>
+        <text x="480" y="236" text-anchor="middle" fill="var(--ink)" font-family="var(--sans)" font-size="13" font-weight="600">Xdet.Engine.PythonNet · 어댑터 (모든 DSP · pythonnet)  <tspan fill="var(--good)" font-family="var(--mono)" font-size="11">(유지+미러 추가)</tspan></text>
+        <text x="480" y="255" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--muted)">registry = stage→module.process · post 제외 · validation_mode=True · 결과 캐시(calib 버전 키)</text>
+
+        <rect x="150" y="292" width="660" height="34" rx="9" class="frozenbox"/>
+        <text x="480" y="314" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="var(--frozen)" font-weight="600">FROZEN · Python 골든 — orchestrator.run_pipeline · modules · metrics · common · ingest_edrogi</text>
+
+        <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#ah2)">
+          <path d="M480,78 L480,110"/><path d="M480,176 L480,208"/><path d="M480,270 L480,288"/>
+        </g>
+        <text x="500" y="99" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">depends on</text>
+        <text x="500" y="196" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">implemented by</text>
+        <text x="500" y="285" font-family="var(--mono)" font-size="9.5" fill="var(--faint)">calls (무변경)</text>
+
+        <rect x="20" y="114" width="112" height="62" rx="10" fill="var(--panel)" stroke="var(--border)"/>
+        <text x="76" y="139" text-anchor="middle" fill="var(--ink)" font-family="var(--sans)" font-size="11.5" font-weight="600">Tests</text>
+        <text x="76" y="155" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">Fidelity·Arm</text>
+        <text x="76" y="166" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--muted)">+Compose(신규)</text>
+        <path d="M132,145 L146,145" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+        <rect x="828" y="292" width="112" height="34" rx="9" fill="var(--panel)" stroke="var(--border)"/>
+        <text x="884" y="313" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--muted)">images/에드로지</text>
+        <path d="M828,309 L812,309" stroke="var(--frozen)" stroke-width="1.5" marker-end="url(#ah2)"/>
+      </svg>
+    </div>
+  </figure>
+
+  <hr>
+
+  <!-- stage availability + viewer map -->
+  <h2><span class="n">5</span>스테이지 가용성 + 뷰어 매핑</h2>
+  <p class="sub">조합 UI에서 어떤 스테이지가 <b>등록 실측으로 실제 실행 가능한지</b>가 핵심. offset/gain/defect만 등록 가용, lag는 임시 IRF, 나머지는 합성/#33 대기.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:15%">스테이지</th><th style="width:15%">calib 입력</th><th>영상에서 보이는 변화</th><th style="width:16%">가용성</th></tr></thead>
+    <tbody>
+      <tr><td class="k">offset</td><td class="k">MasterDark</td><td>암전류·페데스탈 제거 — 배경 바닥이 0으로</td><td><span class="pill run">registered</span></td></tr>
+      <tr><td class="k">gain</td><td class="k">CalSet_19008</td><td>평탄화 — 비네팅/힐 그라디언트 균일화</td><td><span class="pill run">registered</span></td></tr>
+      <tr><td class="k">defect</td><td class="k">BPM</td><td>불량 픽셀/라인 보간 — 점·줄 채움 (interp 오버레이)</td><td><span class="pill run">registered</span></td></tr>
+      <tr><td class="k">lag</td><td class="k">GHOST · IRF</td><td>이전 프레임 잔상 소멸 — 시퀀스에서만</td><td><span class="pill ph">placeholder</span></td></tr>
+      <tr><td class="k">line_noise · saturation</td><td class="k">— / mask</td><td>줄 제거 · 포화 마스크(픽셀 무변, 오버레이만)</td><td><span class="pill blk">#33 / 합성</span></td></tr>
+      <tr><td class="k">geometry · grid · virtual_grid</td><td class="k">계수 / —</td><td>왜곡 교정 · 그리드선 억제 · 산란 제거</td><td><span class="pill blk">#33 대기</span></td></tr>
+      <tr><td class="k">denoise · mse · window</td><td class="k">noise / —</td><td>노이즈↓ · 대비/DRC · 표시매핑(GSDF) → [0,1] 전환</td><td><span class="pill blk">합성 (mse: denoise 선행 필수)</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- doc gap + augmentation -->
+  <h2><span class="n">6</span>문서 갭 · 보강 계획 (전수 감사 결과)</h2>
+            <p class="sub">골든은 이미 조합을 지원한다. 현재 구현 갭은 9-family typed seam, 공통 셸, job/cancel, availability/evidence, provenance와 모든 catalog action을 연결하는 8개 목적 탭이다. 상세 기준선 후보는 SPEC-XGUI-MASTER/XSEAM-002 v0.5.1이다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:26%">문서</th><th style="width:16%">상태</th><th>보강 타깃</th></tr></thead>
+    <tbody>
+      <tr><td class="k">골든 (orchestrator/modules)</td><td><span class="pill keep">이미 지원</span></td><td>run_pipeline + calib_map + validation_mode/intermediates — 변경 불필요·불가(FROZEN)</td></tr>
+      <tr><td class="k">GUI_CRITERIA.md §3</td><td><span class="pill change">C-21 신설</span></td><td>다단계 조합 검증: 개별(자기 calib)→per-stage 결과→부분/전체 조합 출력. C-09/C-11/C-20·SWR-000-2/-5 준수 명시.</td></tr>
+      <tr><td class="k">SPEC-XSEAM-001 (씬 슬라이스, 병합)</td><td><span class="pill blk">조합 제외 中</span></td><td>편집보다 신규 SPEC 권장(P1.5 동결 유지). 후보: <b>SPEC-XSEAM-002</b> 또는 XSEAM Phase 2.</td></tr>
+                <tr><td class="k">SPEC-XSEAM-002 v0.5.1</td><td><span class="pill change">승인 대기</span></td><td>9-family typed DTO, pipeline/sequence/calibration/metric/NDT/tier, state, DQE, typed error, Python GUI helper 금지.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="foot">참고: SPEC-XSEAM-001 frontmatter는 issue #50을 참조하나, 본 재설계 추적 이슈는 #58. 신규 SPEC은 #58에 연결.</p>
+
+  <hr>
+
+  <!-- migration -->
+  <h2><span class="n">7</span>마이그레이션 — 유지 / 재구축 / 확장 / 폐기</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:30%">대상</th><th style="width:14%">처리</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td class="k">IXdetEngine 계약 · fidelity 테스트 · C-20 가드 · 골든</td><td><span class="pill keep">유지</span></td><td>계약·검증 자산·알고리즘 불변.</td></tr>
+      <tr><td class="k">시임 RunPipeline 미러 + Compose DTO</td><td><span class="pill change">확장(신규)</span></td><td>PipelineDefinition·calib_map·params_map·validationMode → 조합 위임. + Compose 테스트.</td></tr>
+      <tr><td class="k">MainWindow · Correction Stack VM · 렌더 경로</td><td><span class="pill rebuild">재구축</span></td><td>탭 더미 → 단일 워크스페이스 + 조합 체크리스트. ScottPlot Viridis → WriteableBitmap+W/L LUT 풀 3072².</td></tr>
+      <tr><td class="k">개별/부분/전체 실행 · Compare · Solo</td><td><span class="pill rebuild">재구축</span></td><td>Solo(개별)·Run subset/full·intermediates 스크럽·Before/After·Diff·Blink·Checker·Split.</td></tr>
+      <tr><td class="k">Viridis heatmap · 512² 표시경로 · 4탭 더미</td><td><span class="pill drop">폐기</span></td><td>개요 썸네일만 512² 잔존. MTF 라인차트는 정당하게 유지.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout ok">
+      <b>다음 단계.</b> G0 12/12 내부 검토 → 사용자 승인 → v0.5.1 기준선 동결 이후에만 M1/M2: 9-family seam + shared shell/RunCoordinator/export → 8개 그룹 탭 → 중앙 TC 자동화 증거 등록.
+      <b>알고리즘 골든은 그대로이며, 승인 뒤 기존 얇은 시임을 v0.5.1 전체 알고리즘 typed 계약으로 확장한다.</b>
+  </div>
+
+    <p class="foot">이슈 #58 · 알고리즘 고정 · 등록/사용자 입력 증거 분리 · 화면 방향 자료. 기준선 후보는 SPEC-XGUI-MASTER/SPEC-XSEAM-002 v0.5.1이며 현재 구현은 미허가.</p>
+</div>

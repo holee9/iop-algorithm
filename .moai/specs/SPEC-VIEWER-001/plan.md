@@ -13,6 +13,8 @@ labels: [gui, viewer, verification-tool]
 
 # SPEC-VIEWER-001 구현 계획 — 검증 GUI
 
+> **후속 관계:** `apps/gui/` 구현 완료 기록이며 현재 `apps/xdet-console/` WPF 구현 계획을 대체하지 않는다. WPF 계획·계약·TC는 사용자 승인 대기 중인 `SPEC-XGUI-MASTER` v0.5.1과 `SPEC-XSEAM-002` v0.5.1을 따른다.
+
 > 상태: **implemented** — Phase 0→0.5→1→2 + 아키텍처/CI 게이트 전건 완료(2026-07-10). EARS 확정본은 [spec.md](./spec.md), 인수 기준은 [acceptance.md](./acceptance.md). 근거는 `docs/GUI_CRITERIA.md`(C-01~C-20·SG-1~SG-3·§4 선행 갭·§5 준수사항)·`docs/GUI_REVIEW.md`(§4.5 `apps/gui/` 확정). 소비 대상 계약은 [SPEC-INFRA-001](../SPEC-INFRA-001/spec.md)(`run_harness`·`ProcessModule`·`run_pipeline`·`CANONICAL_ORDER`·XFrame·`MaskFlag`, 변경 없음, 전건 KEPT로 재확인됨).
 
 ## 1. 개요
